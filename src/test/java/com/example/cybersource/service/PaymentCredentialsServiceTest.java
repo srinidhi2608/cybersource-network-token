@@ -54,10 +54,10 @@ class PaymentCredentialsServiceTest {
     private PaymentCredentialsService paymentCredentialsService;
 
     private static final String INSTRUMENT_IDENTIFIER_TOKEN_ID = "test-instrument-id";
+    private static final String MERCHANT_ID = "test-merchant-123";
     private static final String JWT_TOKEN = "test-jwt-token";
     private static final String API_RESPONSE = "{\"networkToken\":{\"number\":\"1234567890123456\",\"cryptogram\":\"test-cryptogram\"}}";
     private static final String BASE_URL = "https://api.cybersource.com";
-    private static final String MERCHANT_ID = "test-merchant-id";
     private static final String API_KEY = "test-api-key";
     private static final String SECRET_KEY = "test-secret-key";
 
@@ -65,7 +65,6 @@ class PaymentCredentialsServiceTest {
     void setUp() {
         // Only set up the basic config stubs that are used in all tests
         lenient().when(cybersourceConfig.getBaseUrl()).thenReturn(BASE_URL);
-        lenient().when(cybersourceConfig.getMerchantId()).thenReturn(MERCHANT_ID);
         lenient().when(cybersourceConfig.getApiKey()).thenReturn(API_KEY);
         lenient().when(cybersourceConfig.getSecretKey()).thenReturn(SECRET_KEY);
     }
@@ -85,7 +84,7 @@ class PaymentCredentialsServiceTest {
         when(tokenStorageRepository.save(any(TokenStorage.class))).thenReturn(new TokenStorage());
 
         // Act
-        String result = paymentCredentialsService.getPaymentCredentials(INSTRUMENT_IDENTIFIER_TOKEN_ID);
+        String result = paymentCredentialsService.getPaymentCredentials(INSTRUMENT_IDENTIFIER_TOKEN_ID, MERCHANT_ID);
 
         // Assert
         assertEquals(API_RESPONSE, result);
@@ -103,7 +102,7 @@ class PaymentCredentialsServiceTest {
 
         // Act & Assert
         PaymentCredentialsException exception = assertThrows(PaymentCredentialsException.class, 
-                () -> paymentCredentialsService.getPaymentCredentials(INSTRUMENT_IDENTIFIER_TOKEN_ID));
+                () -> paymentCredentialsService.getPaymentCredentials(INSTRUMENT_IDENTIFIER_TOKEN_ID, MERCHANT_ID));
         
         assertTrue(exception.getMessage().contains("Failed to generate JWT token"));
         verify(webClient, never()).get();
@@ -129,7 +128,7 @@ class PaymentCredentialsServiceTest {
 
         // Act & Assert
         CybersourceApiException exception = assertThrows(CybersourceApiException.class, 
-                () -> paymentCredentialsService.getPaymentCredentials(INSTRUMENT_IDENTIFIER_TOKEN_ID));
+                () -> paymentCredentialsService.getPaymentCredentials(INSTRUMENT_IDENTIFIER_TOKEN_ID, MERCHANT_ID));
         
         assertEquals(400, exception.getStatusCode());
         assertTrue(exception.getMessage().contains("Failed to get payment credentials from Cybersource API"));
@@ -156,7 +155,7 @@ class PaymentCredentialsServiceTest {
 
         // Act & Assert
         NetworkException exception = assertThrows(NetworkException.class, 
-                () -> paymentCredentialsService.getPaymentCredentials(INSTRUMENT_IDENTIFIER_TOKEN_ID));
+                () -> paymentCredentialsService.getPaymentCredentials(INSTRUMENT_IDENTIFIER_TOKEN_ID, MERCHANT_ID));
         
         assertTrue(exception.getMessage().contains("Network error while calling Cybersource API"));
     }
@@ -178,7 +177,7 @@ class PaymentCredentialsServiceTest {
 
         // Act & Assert
         DataAccessException exception = assertThrows(DataAccessException.class, 
-                () -> paymentCredentialsService.getPaymentCredentials(INSTRUMENT_IDENTIFIER_TOKEN_ID));
+                () -> paymentCredentialsService.getPaymentCredentials(INSTRUMENT_IDENTIFIER_TOKEN_ID, MERCHANT_ID));
         
         assertTrue(exception.getMessage().contains("Failed to persist payment credentials"));
     }
@@ -248,7 +247,7 @@ class PaymentCredentialsServiceTest {
         when(tokenStorageRepository.save(any(TokenStorage.class))).thenReturn(new TokenStorage());
 
         // Act
-        paymentCredentialsService.getPaymentCredentials(INSTRUMENT_IDENTIFIER_TOKEN_ID);
+        paymentCredentialsService.getPaymentCredentials(INSTRUMENT_IDENTIFIER_TOKEN_ID, MERCHANT_ID);
 
         // Assert
         String expectedUri = BASE_URL + "/pts/v2/instrumentidentifiers/" + INSTRUMENT_IDENTIFIER_TOKEN_ID + "/networkTokens";
@@ -272,7 +271,7 @@ class PaymentCredentialsServiceTest {
         when(tokenStorageRepository.save(any(TokenStorage.class))).thenReturn(new TokenStorage());
 
         // Act
-        paymentCredentialsService.getPaymentCredentials(INSTRUMENT_IDENTIFIER_TOKEN_ID);
+        paymentCredentialsService.getPaymentCredentials(INSTRUMENT_IDENTIFIER_TOKEN_ID, MERCHANT_ID);
 
         // Assert
         verify(tokenStorageRepository).save(argThat(tokenStorage -> 
@@ -283,5 +282,70 @@ class PaymentCredentialsServiceTest {
             tokenStorage.getMetadata().containsKey("instrumentIdentifierTokenId") &&
             tokenStorage.getMetadata().get("instrumentIdentifierTokenId").equals(INSTRUMENT_IDENTIFIER_TOKEN_ID)
         ));
+    }
+    
+    @Test
+    void testGetPaymentCredentials_WithDifferentMerchantIds() throws Exception {
+        // Test multiple merchant IDs
+        String merchantId1 = "merchant-001";
+        String merchantId2 = "merchant-002";
+        
+        // Arrange for first call
+        when(jwtTokenUtil.generateJwt(eq(merchantId1), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(JWT_TOKEN + "-1");
+        when(jwtTokenUtil.generateJwt(eq(merchantId2), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(JWT_TOKEN + "-2");
+
+        when(webClient.get()).thenReturn(requestHeadersUriSpec);
+        when(requestHeadersUriSpec.uri(anyString())).thenReturn(requestHeadersSpec);
+        when(requestHeadersSpec.header(anyString(), anyString())).thenReturn(requestHeadersSpec);
+        when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
+        when(responseSpec.bodyToMono(String.class)).thenReturn(Mono.just(API_RESPONSE));
+        
+        when(tokenStorageRepository.save(any(TokenStorage.class))).thenReturn(new TokenStorage());
+
+        // Act for first merchant
+        String result1 = paymentCredentialsService.getPaymentCredentials(INSTRUMENT_IDENTIFIER_TOKEN_ID, merchantId1);
+        
+        // Act for second merchant
+        String result2 = paymentCredentialsService.getPaymentCredentials(INSTRUMENT_IDENTIFIER_TOKEN_ID, merchantId2);
+
+        // Assert both calls succeeded
+        assertEquals(API_RESPONSE, result1);
+        assertEquals(API_RESPONSE, result2);
+        
+        // Verify JWT tokens were generated for each merchant
+        verify(jwtTokenUtil).generateJwt(merchantId1, API_KEY, SECRET_KEY, 
+                                       "/pts/v2/instrumentidentifiers/" + INSTRUMENT_IDENTIFIER_TOKEN_ID + "/networkTokens", 
+                                       "GET");
+        verify(jwtTokenUtil).generateJwt(merchantId2, API_KEY, SECRET_KEY, 
+                                       "/pts/v2/instrumentidentifiers/" + INSTRUMENT_IDENTIFIER_TOKEN_ID + "/networkTokens", 
+                                       "GET");
+        
+        // Verify token storage saved with correct merchant IDs
+        verify(tokenStorageRepository, times(2)).save(any(TokenStorage.class));
+    }
+    
+    @Test
+    void testGetPaymentCredentials_UnexpectedException() throws Exception {
+        // Test unexpected exception handling
+        when(jwtTokenUtil.generateJwt(anyString(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(JWT_TOKEN);
+
+        when(webClient.get()).thenReturn(requestHeadersUriSpec);
+        when(requestHeadersUriSpec.uri(anyString())).thenReturn(requestHeadersSpec);
+        when(requestHeadersSpec.header(anyString(), anyString())).thenReturn(requestHeadersSpec);
+        when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
+        when(responseSpec.bodyToMono(String.class)).thenReturn(Mono.just(API_RESPONSE));
+        
+        // Cause unexpected exception during token storage save
+        when(tokenStorageRepository.save(any(TokenStorage.class)))
+                .thenThrow(new RuntimeException("Unexpected database error"));
+
+        // Act & Assert
+        PaymentCredentialsException exception = assertThrows(PaymentCredentialsException.class, 
+                () -> paymentCredentialsService.getPaymentCredentials(INSTRUMENT_IDENTIFIER_TOKEN_ID, MERCHANT_ID));
+        
+        assertTrue(exception.getMessage().contains("Unexpected error while getting payment credentials"));
     }
 }

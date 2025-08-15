@@ -16,17 +16,23 @@ public class CybersourceController {
     private PaymentCredentialsService paymentCredentialsService;
 
     @PostMapping("/instrument-identifier")
-    public String createInstrumentIdentifier(@RequestParam String cardNumber) throws Exception {
-        return instrumentIdentifierService.createInstrumentIdentifier(cardNumber);
+    public String createInstrumentIdentifier(
+            @RequestParam String cardNumber,
+            @RequestParam String merchantId) throws Exception {
+        return instrumentIdentifierService.createInstrumentIdentifier(cardNumber, merchantId);
     }
 
     @GetMapping("/instrument-identifier/{tokenId}")
-    public String getInstrumentIdentifier(@PathVariable String tokenId) throws Exception {
-        return instrumentIdentifierService.getInstrumentIdentifier(tokenId);
+    public String getInstrumentIdentifier(
+            @PathVariable String tokenId,
+            @RequestParam String merchantId) throws Exception {
+        return instrumentIdentifierService.getInstrumentIdentifier(tokenId, merchantId);
     }
 
     @GetMapping("/payment-credentials/{tokenId}")
-    public String getPaymentCredentials(@PathVariable String tokenId) throws Exception {
-        return paymentCredentialsService.getPaymentCredentials(tokenId);
+    public String getPaymentCredentials(
+            @PathVariable String tokenId,
+            @RequestParam String merchantId) throws Exception {
+        return paymentCredentialsService.getPaymentCredentials(tokenId, merchantId);
     }
 }

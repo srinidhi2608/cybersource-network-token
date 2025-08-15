@@ -20,20 +20,20 @@ public class NetworkTokenService {
         this.paymentCredentialsService = paymentCredentialsService;
     }
 
-    public NetworkTokenResult generateNetworkTokenAndCryptogram(String cardNumber) throws CybersourceException {
-        logger.info("Generating network token and cryptogram for card number ending in: {}", 
-                   cardNumber.substring(Math.max(0, cardNumber.length() - 4)));
+    public NetworkTokenResult generateNetworkTokenAndCryptogram(String cardNumber, String merchantId) throws CybersourceException {
+        logger.info("Generating network token and cryptogram for merchant: {} and card number ending in: {}", 
+                   merchantId, cardNumber.substring(Math.max(0, cardNumber.length() - 4)));
         
         long start = System.currentTimeMillis();
 
         try {
             // Step 1: Create Instrument Identifier
-            String instrumentResponse = instrumentIdentifierService.createInstrumentIdentifier(cardNumber);
+            String instrumentResponse = instrumentIdentifierService.createInstrumentIdentifier(cardNumber, merchantId);
             JSONObject instrumentJson = new JSONObject(instrumentResponse);
             String instrumentIdentifierId = instrumentJson.getString("id");
 
             // Step 2: Get Network Token and Cryptogram with enhanced error handling
-            String credentialsResponse = paymentCredentialsService.getPaymentCredentials(instrumentIdentifierId);
+            String credentialsResponse = paymentCredentialsService.getPaymentCredentials(instrumentIdentifierId, merchantId);
             JSONObject credentialsJson = new JSONObject(credentialsResponse);
 
             // Parse network token and cryptogram from response
@@ -43,15 +43,15 @@ public class NetworkTokenService {
             long end = System.currentTimeMillis();
             long elapsedMs = end - start;
             
-            logger.info("Successfully generated network token and cryptogram in {}ms", elapsedMs);
+            logger.info("Successfully generated network token and cryptogram for merchant: {} in {}ms", merchantId, elapsedMs);
 
             return new NetworkTokenResult(networkToken, cryptogram, elapsedMs);
             
         } catch (PaymentCredentialsException | NetworkException | DataAccessException | CybersourceApiException e) {
-            logger.error("Failed to generate network token and cryptogram", e);
+            logger.error("Failed to generate network token and cryptogram for merchant: {}", merchantId, e);
             throw e;
         } catch (Exception e) {
-            logger.error("Unexpected error while generating network token and cryptogram", e);
+            logger.error("Unexpected error while generating network token and cryptogram for merchant: {}", merchantId, e);
             throw new CybersourceException("Unexpected error while generating network token and cryptogram", e);
         }
     }

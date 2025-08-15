@@ -13,7 +13,9 @@ public class NetworkTokenController {
     private NetworkTokenService networkTokenService;
 
     @PostMapping
-    public NetworkTokenResult getNetworkToken(@RequestParam String cardNumber) throws Exception {
-        return networkTokenService.generateNetworkTokenAndCryptogram(cardNumber);
+    public NetworkTokenResult getNetworkToken(
+            @RequestParam String cardNumber,
+            @RequestParam String merchantId) throws Exception {
+        return networkTokenService.generateNetworkTokenAndCryptogram(cardNumber, merchantId);
     }
 }
