@@ -1,11 +1,14 @@
 package com.example.cybersource.repository;
 
 import com.example.cybersource.entity.TokenStorage;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.data.mongo.DataMongoTest;
-import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.containers.MongoDBContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -16,9 +19,19 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.*;
 
 @DataMongoTest
-@SpringJUnitConfig(classes = {})
-@Disabled("Requires MongoDB connection - enable for integration testing")
+@Testcontainers
+// TODO: Enable when MongoDB TestContainers is properly configured for this environment
+// For now, these tests are commented out to focus on service layer test coverage
+@org.junit.jupiter.api.Disabled("MongoDB integration tests - enable with proper environment setup")
 class TokenStorageRepositoryTest {
+
+    @Container
+    static MongoDBContainer mongoDBContainer = new MongoDBContainer("mongo:4.4.2");
+
+    @DynamicPropertySource
+    static void setProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.data.mongodb.uri", mongoDBContainer::getReplicaSetUrl);
+    }
 
     @Autowired
     private TokenStorageRepository tokenStorageRepository;
