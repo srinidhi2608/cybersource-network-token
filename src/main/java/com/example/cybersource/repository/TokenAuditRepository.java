@@ -45,4 +45,12 @@ public interface TokenAuditRepository extends MongoRepository<TokenAudit, String
      * @return List of token audits
      */
     List<TokenAudit> findByExternalReference(String externalReference);
+    
+    /**
+     * Find token audit by traceId.
+     *
+     * @param traceId the unique trace ID
+     * @return Optional containing the token audit if found
+     */
+    Optional<TokenAudit> findByTraceId(String traceId);
 }

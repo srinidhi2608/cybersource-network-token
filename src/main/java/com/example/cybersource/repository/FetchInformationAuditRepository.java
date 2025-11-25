@@ -5,6 +5,7 @@ import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Repository interface for FetchInformationAudit entity.
@@ -35,4 +36,12 @@ public interface FetchInformationAuditRepository extends MongoRepository<FetchIn
      * @return List of fetch information audits
      */
     List<FetchInformationAudit> findByExternalReference(String externalReference);
+    
+    /**
+     * Find fetch information audit by traceId.
+     *
+     * @param traceId the unique trace ID
+     * @return Optional containing the fetch information audit if found
+     */
+    Optional<FetchInformationAudit> findByTraceId(String traceId);
 }

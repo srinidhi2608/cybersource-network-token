@@ -62,7 +62,8 @@ FIRST table to save data. Every request including duplicates creates an audit.
   "isDuplicate": false,
   "timestamp": "2025-01-01T00:00:00",
   "isRequestComplete": true,
-  "externalReference": "transaction-ref"
+  "externalReference": "transaction-ref",
+  "traceId": "uuid-for-identifying-record"
 }
 ```
 
@@ -70,6 +71,7 @@ FIRST table to save data. Every request including duplicates creates an audit.
 - PaymentTokenId and InstrumentIdentifier are 1:1 mapping
 - Only ONE record per instrumentIdentifierId should have `isDuplicate=false`
 - All subsequent requests with same instrumentIdentifierId marked as `isDuplicate=true`
+- `traceId` is a unique UUID generated at insert time for record identification
 
 #### 4. FetchInformationAudits
 Records every cryptogram fetch operation and information retrieval.
@@ -80,7 +82,8 @@ Records every cryptogram fetch operation and information retrieval.
   "informationType": "InstrumentIdentifier|Cryptogram|NetworkToken",
   "timestamp": "2025-01-01T00:00:00",
   "isRequestComplete": true,
-  "externalReference": "transaction-ref"
+  "externalReference": "transaction-ref",
+  "traceId": "uuid-for-identifying-record"
 }
 ```
 
@@ -159,6 +162,56 @@ Generates a fresh cryptogram for an existing payment token.
 3. Calls Cybersource to fetch fresh cryptogram
 4. Records in FetchInformationAudit with `informationType="Cryptogram"`
 5. Returns ONLY cryptogram
+
+### 3. Update TokenAudit External Reference
+
+Updates the external reference for a TokenAudit record identified by traceId.
+
+**Endpoint:** `PUT /api/v1/audits/token-audits/external-reference`
+
+**Request Body:**
+```json
+{
+  "traceId": "550e8400-e29b-41d4-a716-446655440000",
+  "externalReference": "new-transaction-ref"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "traceId": "550e8400-e29b-41d4-a716-446655440000",
+  "externalReference": "new-transaction-ref",
+  "auditType": "TokenAudit",
+  "success": true,
+  "message": "External reference updated successfully"
+}
+```
+
+### 4. Update FetchInformationAudit External Reference
+
+Updates the external reference for a FetchInformationAudit record identified by traceId.
+
+**Endpoint:** `PUT /api/v1/audits/fetch-information-audits/external-reference`
+
+**Request Body:**
+```json
+{
+  "traceId": "550e8400-e29b-41d4-a716-446655440000",
+  "externalReference": "new-transaction-ref"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "traceId": "550e8400-e29b-41d4-a716-446655440000",
+  "externalReference": "new-transaction-ref",
+  "auditType": "FetchInformationAudit",
+  "success": true,
+  "message": "External reference updated successfully"
+}
+```
 
 ### Error Responses
 

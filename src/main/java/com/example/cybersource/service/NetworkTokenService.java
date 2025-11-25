@@ -139,6 +139,7 @@ public class NetworkTokenService {
                     .timestamp(LocalDateTime.now())
                     .isRequestComplete(true)
                     .externalReference(request.getExternalReference())
+                    .traceId(UUID.randomUUID().toString())
                     .build();
             fetchInformationAuditRepository.save(fetchAudit);
 
@@ -212,6 +213,7 @@ public class NetworkTokenService {
                     .timestamp(LocalDateTime.now())
                     .isRequestComplete(true)
                     .externalReference(request.getExternalReference())
+                    .traceId(UUID.randomUUID().toString())
                     .build();
             fetchInformationAuditRepository.save(fetchAudit);
 
@@ -262,6 +264,7 @@ public class NetworkTokenService {
                 .isRequestComplete(false)
                 .isDuplicate(false)
                 .externalReference(request.getExternalReference())
+                .traceId(UUID.randomUUID().toString())
                 .build();
         return tokenAuditRepository.save(audit);
     }
@@ -303,6 +306,7 @@ public class NetworkTokenService {
                     .timestamp(LocalDateTime.now())
                     .isRequestComplete(true)
                     .externalReference(externalReference)
+                    .traceId(UUID.randomUUID().toString())
                     .build();
             fetchInformationAuditRepository.save(fetchAudit);
 

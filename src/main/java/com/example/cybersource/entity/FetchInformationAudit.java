@@ -53,4 +53,10 @@ public class FetchInformationAudit {
      */
     @Indexed
     private String externalReference;
+    
+    /**
+     * Unique trace ID (UUID) generated at insert time for identifying the document.
+     */
+    @Indexed(unique = true)
+    private String traceId;
 }
