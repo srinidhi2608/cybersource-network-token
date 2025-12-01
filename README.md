@@ -10,7 +10,8 @@ A comprehensive Token Management System for securely managing network tokens and
 - **Audit Trail**: Complete audit logging for all operations including duplicates
 - **Merchant Enrollment**: Support for multiple enrolled merchants
 - **Base64 Encryption**: Secure storage of network tokens
-- **RESTful APIs**: Two clean REST endpoints for token and cryptogram operations
+- **RESTful APIs**: Clean REST endpoints for token and cryptogram operations
+- **Token Lifecycle Webhooks**: Listener endpoint for Cybersource token lifecycle updates with AWS SQS integration
 - **Comprehensive Testing**: Unit tests, integration tests, and Cucumber BDD tests
 
 ## Architecture
@@ -234,6 +235,61 @@ All error responses follow this format:
 - `502 Bad Gateway` - Cybersource API errors
 - `503 Service Unavailable` - Network errors
 - `500 Internal Server Error` - Other errors
+
+### 5. Token Lifecycle Webhook
+
+Receives token lifecycle update messages from Cybersource Token Management Service and forwards to AWS SQS.
+
+**Endpoint:** `POST /api/v1/webhooks/token-lifecycle`
+
+**Request Body:**
+```json
+{
+  "eventType": "TOKEN_UPDATED",
+  "eventTimestamp": "2024-01-15T10:30:00Z",
+  "tokenInformation": {
+    "tokenId": "token-123",
+    "tokenStatus": "ACTIVE",
+    "expirationMonth": "12",
+    "expirationYear": "2025",
+    "paymentAccountReference": "PAR-ABC-123"
+  },
+  "instrumentIdentifier": {
+    "id": "instr-456",
+    "state": "ACTIVE"
+  },
+  "organizationInformation": {
+    "organizationId": "org-789",
+    "merchantName": "Test Merchant"
+  }
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "messageId": "sqs-message-id-123",
+  "message": "Token lifecycle update processed successfully"
+}
+```
+
+**SQS Queue Message (extracted fields):**
+```json
+{
+  "tokenId": "token-123",
+  "instrumentIdentifierId": "instr-456",
+  "organizationId": "org-789",
+  "tokenStatus": "ACTIVE",
+  "eventType": "TOKEN_UPDATED",
+  "eventTimestamp": "2024-01-15T10:30:00Z",
+  "paymentAccountReference": "PAR-ABC-123"
+}
+```
+
+**Failure Handling:**
+- On processing failure, the original message is sent to the Dead Letter Queue (DLQ)
+- DLQ message includes original payload, error details, and timestamp
 
 ## Setup Instructions
 
