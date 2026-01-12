@@ -66,6 +66,8 @@ class AuditServiceTest {
                 .thenReturn(Optional.of(existingAudit));
         when(tokenAuditRepository.save(any(TokenAudit.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
+        when(fetchInformationAuditRepository.findByTraceId(testTraceId))
+                .thenReturn(Optional.empty());
 
         // Act
         UpdateExternalReferenceResponse response = auditService.updateTokenAuditExternalReference(testRequest);
@@ -80,6 +82,52 @@ class AuditServiceTest {
 
         verify(tokenAuditRepository).findByTraceId(testTraceId);
         verify(tokenAuditRepository).save(any(TokenAudit.class));
+        verify(fetchInformationAuditRepository).findByTraceId(testTraceId);
+    }
+
+    @Test
+    void testUpdateTokenAuditExternalReference_AlsoUpdatesFetchInformationAudit() throws Exception {
+        // Arrange
+        TokenAudit existingTokenAudit = TokenAudit.builder()
+                .id("mongo-id-123")
+                .traceId(testTraceId)
+                .externalReference("old-external-ref")
+                .paymentTokenId("payment-token-123")
+                .timestamp(LocalDateTime.now())
+                .build();
+
+        FetchInformationAudit existingFetchAudit = FetchInformationAudit.builder()
+                .id("mongo-id-456")
+                .traceId(testTraceId)
+                .externalReference("old-fetch-ref")
+                .paymentTokenId("payment-token-123")
+                .informationType("Cryptogram")
+                .timestamp(LocalDateTime.now())
+                .build();
+
+        when(tokenAuditRepository.findByTraceId(testTraceId))
+                .thenReturn(Optional.of(existingTokenAudit));
+        when(tokenAuditRepository.save(any(TokenAudit.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(fetchInformationAuditRepository.findByTraceId(testTraceId))
+                .thenReturn(Optional.of(existingFetchAudit));
+        when(fetchInformationAuditRepository.save(any(FetchInformationAudit.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        // Act
+        UpdateExternalReferenceResponse response = auditService.updateTokenAuditExternalReference(testRequest);
+
+        // Assert
+        assertNotNull(response);
+        assertTrue(response.isSuccess());
+        assertEquals(testTraceId, response.getTraceId());
+        assertEquals(testExternalReference, response.getExternalReference());
+
+        // Verify both audits were updated
+        verify(tokenAuditRepository).findByTraceId(testTraceId);
+        verify(tokenAuditRepository).save(any(TokenAudit.class));
+        verify(fetchInformationAuditRepository).findByTraceId(testTraceId);
+        verify(fetchInformationAuditRepository).save(any(FetchInformationAudit.class));
     }
 
     @Test
@@ -164,6 +212,8 @@ class AuditServiceTest {
                 .thenReturn(Optional.of(existingAudit));
         when(tokenAuditRepository.save(any(TokenAudit.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
+        when(fetchInformationAuditRepository.findByTraceId(testTraceId))
+                .thenReturn(Optional.empty());
 
         // Act
         auditService.updateTokenAuditExternalReference(testRequest);

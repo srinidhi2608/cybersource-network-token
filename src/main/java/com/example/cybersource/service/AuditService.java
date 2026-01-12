@@ -31,10 +31,11 @@ public class AuditService {
 
     /**
      * Updates the external reference in a TokenAudit record identified by traceId.
+     * Also updates the FetchInformationAudit with the same traceId if it exists.
      *
      * @param request the update request containing traceId and new externalReference
      * @return response containing the update result
-     * @throws CybersourceException if the record is not found
+     * @throws CybersourceException if the TokenAudit record is not found
      */
     @Transactional
     public UpdateExternalReferenceResponse updateTokenAuditExternalReference(UpdateExternalReferenceRequest request) 
@@ -51,6 +52,16 @@ public class AuditService {
 
         logger.info("Successfully updated TokenAudit externalReference from '{}' to '{}' for traceId: {}", 
                 oldExternalReference, request.getExternalReference(), request.getTraceId());
+
+        // Also update FetchInformationAudit with the same traceId if it exists
+        fetchInformationAuditRepository.findByTraceId(request.getTraceId()).ifPresent(fetchAudit -> {
+            logger.info("Also updating FetchInformationAudit externalReference for traceId: {}", request.getTraceId());
+            String oldFetchExternalRef = fetchAudit.getExternalReference();
+            fetchAudit.setExternalReference(request.getExternalReference());
+            fetchInformationAuditRepository.save(fetchAudit);
+            logger.info("Successfully updated FetchInformationAudit externalReference from '{}' to '{}' for traceId: {}", 
+                    oldFetchExternalRef, request.getExternalReference(), request.getTraceId());
+        });
 
         return UpdateExternalReferenceResponse.builder()
                 .traceId(request.getTraceId())
