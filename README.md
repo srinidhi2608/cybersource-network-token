@@ -12,6 +12,8 @@ A comprehensive Token Management System for securely managing network tokens and
 - **Base64 Encryption**: Secure storage of network tokens
 - **RESTful APIs**: Clean REST endpoints for token and cryptogram operations
 - **Token Lifecycle Webhooks**: Listener endpoint for Cybersource token lifecycle updates with AWS SQS integration
+- **Webhook Security**: HMAC-SHA256 signature validation for webhook endpoints
+- **Spring Security Integration**: Stateless security with custom filters
 - **Comprehensive Testing**: Unit tests, integration tests, and Cucumber BDD tests
 
 ## Architecture
@@ -291,6 +293,38 @@ Receives token lifecycle update messages from Cybersource Token Management Servi
 - On processing failure, the original message is sent to the Dead Letter Queue (DLQ)
 - DLQ message includes original payload, error details, and timestamp
 
+## Security
+
+### Webhook Signature Validation
+
+The Token Lifecycle webhook endpoint is secured using HMAC-SHA256 signature validation to ensure authenticity and prevent tampering.
+
+**How it works:**
+1. Client generates HMAC-SHA256 hash of request body using shared secret
+2. Client sends signature in `v-c-signature` header
+3. Server validates signature before processing request
+4. Invalid or missing signatures return 401 Unauthorized
+
+**Example request:**
+```bash
+SECRET="your-webhook-secret"
+BODY='{"eventType":"TOKEN_UPDATED","tokenId":"123"}'
+SIGNATURE=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -binary | base64)
+
+curl -X POST http://localhost:8080/api/v1/webhooks/token-lifecycle \
+  -H "Content-Type: application/json" \
+  -H "v-c-signature: $SIGNATURE" \
+  -d "$BODY"
+```
+
+📖 **For detailed security documentation, see [WEBHOOK_SECURITY_GUIDE.md](WEBHOOK_SECURITY_GUIDE.md)**
+
+Includes:
+- Client implementation examples (Java, Python, Node.js, Bash)
+- Security best practices
+- Troubleshooting guide
+- Production checklist
+
 ## Setup Instructions
 
 ### Prerequisites
@@ -316,6 +350,19 @@ cybersource.api-key=your-api-key
 cybersource.secret-key=your-secret-key
 cybersource.merchant-id=your-merchant-id
 cybersource.base-url=https://apitest.cybersource.com
+
+# AWS SQS Configuration
+aws.sqs.region=us-east-1
+aws.sqs.queue-url=https://sqs.us-east-1.amazonaws.com/your-account/token-lifecycle-queue
+aws.sqs.dlq-url=https://sqs.us-east-1.amazonaws.com/your-account/token-lifecycle-dlq
+
+# Webhook Security Configuration
+webhook.signature.secret=YOUR_WEBHOOK_SECRET_KEY
+```
+
+**Important**: Never commit secrets to version control! Use environment variables in production:
+```properties
+webhook.signature.secret=${WEBHOOK_SECRET_ENV_VAR}
 ```
 
 2. Ensure MongoDB is running:
