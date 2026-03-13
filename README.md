@@ -83,10 +83,66 @@ Records every cryptogram fetch operation and information retrieval.
 {
   "paymentTokenId": "uuid",
   "informationType": "InstrumentIdentifier|Cryptogram|NetworkToken",
+  "eventReference": "CreateToken|FetchCryptogram|LCM",
   "timestamp": "2025-01-01T00:00:00",
   "isRequestComplete": true,
   "externalReference": "transaction-ref",
   "traceId": "uuid-for-identifying-record"
+}
+```
+
+#### 5. TokenEvents
+Captures lifecycle events received from Cybersource webhook notifications.
+
+```json
+{
+  "traceId": "uuid",
+  "paymentTokenId": "uuid",
+  "tokenExpiryMonth": "MM",
+  "tokenExpiryYear": "YYYY",
+  "cardSuffix": "1234",
+  "cardExpiryMonth": "MM",
+  "cardExpiryYear": "YYYY",
+  "tokenStatus": "ACTIVE",
+  "lifecycleEventName": "TOKEN_UPDATED",
+  "timestamp": "2025-01-01T00:00:00",
+  "merchantUpdateTimestamp": "2025-01-01T00:00:00"
+}
+```
+
+#### 6. BillingAudit
+Consolidated billing records aggregated from TokenAudits, FetchInformationAudits, and TokenEvents.
+
+```json
+{
+  "traceIdReference": "trace-id-from-source",
+  "traceIdEvent": "NetworkTokenProcessing|Request Cryptogram|TokenLifeCycleManagement",
+  "eventTimeStamp": "2025-01-01T00:00:00",
+  "eventType": "Success|Failure",
+  "merchantTokenRegistrationId": "merchant-id",
+  "billingReferenceNumber": "BILL-1704153600-00000001",
+  "billingBatchNumber": "uuid-for-batch",
+  "timestamp": "2025-01-01T00:00:00",
+  "paymentTokenId": "uuid",
+  "externalReference": "transaction-ref",
+  "notes": "additional-context"
+}
+```
+
+#### 7. BillingAuditSyncInformation
+Tracks the last successful sync timestamp for incremental billing audits.
+
+```json
+{
+  "_id": "singleton-record",
+  "lastSyncTimestamp": "2025-01-01T00:00:00",
+  "lastSyncStartedAt": "2025-01-01T00:00:00",
+  "lastSyncCompletedAt": "2025-01-01T00:00:15",
+  "lastSyncRecordCount": 250,
+  "lastSyncStatus": "SUCCESS|FAILURE|IN_PROGRESS",
+  "version": 1,
+  "createdAt": "2025-01-01T00:00:00",
+  "updatedAt": "2025-01-01T00:00:15"
 }
 ```
 
@@ -293,6 +349,124 @@ Receives token lifecycle update messages from Cybersource Token Management Servi
 - On processing failure, the original message is sent to the Dead Letter Queue (DLQ)
 - DLQ message includes original payload, error details, and timestamp
 
+### 6. Billing Audit Sync API
+
+Synchronizes billing audit data from various source collections (TokenAudits, FetchInformationAudits, TokenEvents) into a consolidated BillingAudit collection for billing and reporting purposes.
+
+**Endpoint:** `POST /api/v1/billing/audits/sync`
+
+**Request Body (Optional):**
+```json
+{
+  "startTime": "2025-01-01T00:00:00",
+  "endTime": "2025-01-02T00:00:00",
+  "forceSynch": false,
+  "batchSize": 1000
+}
+```
+
+All fields are optional. If not provided:
+- `startTime`: Uses `lastSyncTimestamp` from BillingAuditSyncInformation
+- `endTime`: Current time minus 5 minutes (configurable via `billing.sync.offset-minutes`)
+- `forceSynch`: false (prevents concurrent syncs)
+- `batchSize`: Uses configured default (1000)
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Billing audit sync completed successfully",
+  "billingBatchNumber": "b8e25224-cbab-483e-ba71-7ec446e59001",
+  "syncStartTime": "2025-01-01T00:00:00",
+  "syncEndTime": "2025-01-01T23:55:00",
+  "operationStartedAt": "2025-01-02T00:00:00",
+  "operationCompletedAt": "2025-01-02T00:00:15",
+  "tokenAuditCount": 150,
+  "fetchInfoAuditCount": 75,
+  "tokenEventsCount": 25,
+  "totalRecordsCreated": 250,
+  "sampleBillingReferenceNumbers": [
+    "BILL-1704153600-00000001",
+    "BILL-1704153600-00000002",
+    "BILL-1704153600-00000003"
+  ]
+}
+```
+
+**Key Features:**
+- **Unique Billing Reference Numbers**: Generated using MongoDB atomic counter (format: `BILL-{timestamp}-{sequence}`)
+- **Batch Processing**: All records in one sync share the same `billingBatchNumber` (UUID)
+- **Event Type Mapping**:
+  - TokenAudit → `traceIdEvent = "NetworkTokenProcessing"`
+  - FetchInformationAudit (eventReference="FetchCryptogram") → `traceIdEvent = "Request Cryptogram"`
+  - FetchInformationAudit (eventReference="LCM") → `traceIdEvent = "Request Cryptogram"`
+  - TokenEvents → `traceIdEvent = "TokenLifeCycleManagement"`
+- **Event Status**: Determined from `isRequestComplete` and `failureReason` fields (Success/Failure)
+- **Incremental Sync**: Only fetches data since last successful sync
+- **Concurrency Safe**: Uses optimistic locking to prevent concurrent syncs
+
+**Health Check Endpoint:**
+```bash
+curl http://localhost:8080/api/v1/billing/audits/health
+```
+
+**BillingAudit Collection Schema:**
+```json
+{
+  "_id": "ObjectId",
+  "traceIdReference": "trace-id-from-source-collection",
+  "traceIdEvent": "NetworkTokenProcessing|Request Cryptogram|TokenLifeCycleManagement",
+  "eventTimeStamp": "2025-01-01T00:00:00",
+  "eventType": "Success|Failure",
+  "merchantTokenRegistrationId": "merchant-123",
+  "billingReferenceNumber": "BILL-1704153600-00000001",
+  "billingBatchNumber": "uuid-for-this-sync-operation",
+  "timestamp": "2025-01-02T00:00:00",
+  "paymentTokenId": "optional-payment-token-id",
+  "externalReference": "optional-external-ref",
+  "notes": "additional-context"
+}
+```
+
+**BillingAuditSyncInformation Collection:**
+```json
+{
+  "_id": "singleton-record",
+  "lastSyncTimestamp": "2025-01-01T23:55:00",
+  "lastSyncStartedAt": "2025-01-02T00:00:00",
+  "lastSyncCompletedAt": "2025-01-02T00:00:15",
+  "lastSyncRecordCount": 250,
+  "lastSyncStatus": "SUCCESS|FAILURE|IN_PROGRESS",
+  "version": 1,
+  "createdAt": "2025-01-01T00:00:00",
+  "updatedAt": "2025-01-02T00:00:15"
+}
+```
+
+**Example cURL:**
+```bash
+# Sync with default parameters (since last sync to now - 5 minutes)
+curl -X POST http://localhost:8080/api/v1/billing/audits/sync \
+  -H "Content-Type: application/json"
+
+# Sync with custom time window
+curl -X POST http://localhost:8080/api/v1/billing/audits/sync \
+  -H "Content-Type: application/json" \
+  -d '{
+    "startTime": "2025-01-01T00:00:00",
+    "endTime": "2025-01-02T00:00:00"
+  }'
+```
+
+**Error Response (500):**
+```json
+{
+  "success": false,
+  "message": "Billing audit sync failed",
+  "errorMessage": "Another sync operation is in progress. Please try again later."
+}
+```
+
 ## Security
 
 ### Webhook Signature Validation
@@ -358,6 +532,11 @@ aws.sqs.dlq-url=https://sqs.us-east-1.amazonaws.com/your-account/token-lifecycle
 
 # Webhook Security Configuration
 webhook.signature.secret=YOUR_WEBHOOK_SECRET_KEY
+
+# Billing Audit Sync Configuration
+billing.sync.offset-minutes=5
+billing.sync.batch-size=1000
+billing.sequence.collection=BillingSequence
 ```
 
 **Important**: Never commit secrets to version control! Use environment variables in production:
@@ -442,6 +621,12 @@ mvn test
 **Test Classes:**
 - `EncryptionServiceTest` - Tests Base64 encryption/decryption (9 tests)
 - `NetworkTokenServiceTest` - Tests network token service logic (7 tests)
+- `AuditServiceTest` - Tests audit update operations (7 tests)
+- `TokenLifecycleServiceTest` - Tests webhook processing and SQS integration (8 tests)
+- `BillingReferenceNumberGeneratorTest` - Tests unique reference number generation (5 tests)
+- `BillingAuditSyncServiceTest` - Tests billing audit sync logic (11 tests)
+
+**Total:** 47+ unit tests with >80% code coverage
 
 ### Cucumber BDD Tests
 
@@ -476,34 +661,63 @@ src/
 │   │   └── com/example/cybersource/
 │   │       ├── config/          # Configuration classes
 │   │       │   ├── RestClientConfig.java
-│   │       │   └── CybersourceConfig.java
+│   │       │   ├── SecurityConfig.java
+│   │       │   └── AwsSqsConfig.java
+│   │       ├── constants/       # Constants
+│   │       │   └── BillingConstants.java
 │   │       ├── controller/      # REST endpoints
-│   │       │   └── NetworkTokenController.java
+│   │       │   ├── NetworkTokenController.java
+│   │       │   ├── AuditController.java
+│   │       │   ├── TokenLifecycleController.java
+│   │       │   └── BillingAuditController.java
 │   │       ├── dto/             # Request/Response objects
 │   │       │   ├── CreateNetworkTokenRequest.java
 │   │       │   ├── CreateNetworkTokenResponse.java
 │   │       │   ├── CreateCryptogramRequest.java
-│   │       │   └── CreateCryptogramResponse.java
+│   │       │   ├── CreateCryptogramResponse.java
+│   │       │   ├── BillingAuditSyncRequest.java
+│   │       │   └── BillingAuditSyncResponse.java
 │   │       ├── entity/          # MongoDB documents
 │   │       │   ├── MerchantEnrollResponse.java
 │   │       │   ├── TokenTransaction.java
 │   │       │   ├── TokenAudit.java
-│   │       │   └── FetchInformationAudit.java
+│   │       │   ├── FetchInformationAudit.java
+│   │       │   ├── TokenEvents.java
+│   │       │   ├── BillingAudit.java
+│   │       │   └── BillingAuditSyncInformation.java
+│   │       ├── enums/           # Enumerations
+│   │       │   ├── TraceIdEventType.java
+│   │       │   ├── EventType.java
+│   │       │   └── EventReference.java
+│   │       ├── filter/          # Security filters
+│   │       │   ├── WebhookSignatureValidationFilter.java
+│   │       │   └── CachedBodyHttpServletRequest.java
 │   │       ├── repository/      # Data access
+│   │       │   ├── TokenAuditRepository.java
+│   │       │   ├── BillingAuditRepository.java
+│   │       │   └── ... (other repositories)
 │   │       ├── service/         # Business logic
 │   │       │   ├── NetworkTokenService.java
 │   │       │   ├── EncryptionService.java
-│   │       │   ├── CybersourceRestClient.java
-│   │       │   └── InstrumentIdentifierService.java
+│   │       │   ├── AuditService.java
+│   │       │   ├── TokenLifecycleService.java
+│   │       │   ├── BillingAuditSyncService.java
+│   │       │   └── CybersourceRestClient.java
 │   │       ├── exception/       # Custom exceptions
+│   │       │   ├── GlobalExceptionHandler.java
+│   │       │   └── ErrorResponse.java
 │   │       └── util/            # Utility classes
+│   │           ├── SignatureValidator.java
+│   │           └── BillingReferenceNumberGenerator.java
 │   └── resources/
 │       └── application.properties
 └── test/
     ├── java/
     │   └── com/example/cybersource/
     │       ├── cucumber/        # BDD tests
-    │       └── service/         # Unit tests
+    │       ├── filter/          # Filter tests
+    │       ├── service/         # Unit tests
+    │       └── util/            # Utility tests
     └── resources/
         └── features/            # Cucumber feature files
 ```
