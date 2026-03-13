@@ -53,4 +53,13 @@ public interface TokenAuditRepository extends MongoRepository<TokenAudit, String
      * @return Optional containing the token audit if found
      */
     Optional<TokenAudit> findByTraceId(String traceId);
+    
+    /**
+     * Find token audits within a time range.
+     *
+     * @param startTime start of the time range
+     * @param endTime end of the time range
+     * @return List of token audits
+     */
+    List<TokenAudit> findByTimestampBetween(java.time.LocalDateTime startTime, java.time.LocalDateTime endTime);
 }

@@ -38,6 +38,13 @@ public class FetchInformationAudit {
     private String informationType;
     
     /**
+     * Event reference categorizing the type of operation.
+     * Values: "CreateToken", "FetchCryptogram", "LCM"
+     */
+    @Indexed
+    private String eventReference;
+    
+    /**
      * Timestamp when the fetch operation occurred.
      */
     @Indexed

@@ -44,4 +44,13 @@ public interface FetchInformationAuditRepository extends MongoRepository<FetchIn
      * @return Optional containing the fetch information audit if found
      */
     Optional<FetchInformationAudit> findByTraceId(String traceId);
+    
+    /**
+     * Find fetch information audits within a time range.
+     *
+     * @param startTime start of the time range
+     * @param endTime end of the time range
+     * @return List of fetch information audits
+     */
+    List<FetchInformationAudit> findByTimestampBetween(java.time.LocalDateTime startTime, java.time.LocalDateTime endTime);
 }
