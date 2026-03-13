@@ -82,8 +82,9 @@ public class BillingReferenceNumberGenerator {
     
     /**
      * Inner class representing the sequence document in MongoDB.
+     * Package-private for testing purposes.
      */
-    private static class SequenceDocument {
+    static class SequenceDocument {
         private String _id;
         private long seq;
         
