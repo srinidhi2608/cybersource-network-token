@@ -360,7 +360,7 @@ Synchronizes billing audit data from various source collections (TokenAudits, Fe
 {
   "startTime": "2025-01-01T00:00:00",
   "endTime": "2025-01-02T00:00:00",
-  "forceSynch": false,
+  "forceSync": false,
   "batchSize": 1000
 }
 ```
@@ -368,7 +368,7 @@ Synchronizes billing audit data from various source collections (TokenAudits, Fe
 All fields are optional. If not provided:
 - `startTime`: Uses `lastSyncTimestamp` from BillingAuditSyncInformation
 - `endTime`: Current time minus 5 minutes (configurable via `billing.sync.offset-minutes`)
-- `forceSynch`: false (prevents concurrent syncs)
+- `forceSync`: false (prevents concurrent syncs)
 - `batchSize`: Uses configured default (1000)
 
 **Response (200 OK):**

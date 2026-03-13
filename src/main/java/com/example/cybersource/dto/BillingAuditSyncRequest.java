@@ -36,7 +36,7 @@ public class BillingAuditSyncRequest {
      * Optional: Force sync even if another sync is in progress.
      * Default is false.
      */
-    private Boolean forceSynch;
+    private Boolean forceSync;
     
     /**
      * Optional: Batch size for processing records.
