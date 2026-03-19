@@ -1,0 +1,13 @@
+testScenario,startTime,endTime,forceSync,batchSize,description
+success_null_request,,,,,Sync with default parameters (null request body)
+success_empty_request,,,false,,"Empty request with default values"
+success_with_startTime,2025-01-01T00:00:00,,false,1000,Sync with custom start time only
+success_with_endTime,,2025-01-01T23:59:59,false,1000,Sync with custom end time only
+success_with_both_times,2025-01-01T00:00:00,2025-01-02T00:00:00,false,1000,Sync with both start and end times
+success_with_force_sync,2025-01-01T00:00:00,2025-01-02T00:00:00,true,1000,Sync with forceSync enabled
+success_with_batch_size,,,false,500,Sync with custom batch size
+success_full_request,2025-01-01T00:00:00,2025-01-02T00:00:00,true,500,Sync with all parameters
+error_cybersource_exception,2025-01-01T00:00:00,2025-01-02T00:00:00,false,1000,Triggers CybersourceException
+error_generic_exception,2025-02-01T00:00:00,2025-02-02T00:00:00,false,1000,Triggers generic exception
+edge_case_empty_window,2025-01-01T00:00:00,2025-01-01T00:00:00,false,1000,Empty time window (same start and end)
+edge_case_future_times,2025-12-31T00:00:00,2025-12-31T23:59:59,false,1000,Future time window
