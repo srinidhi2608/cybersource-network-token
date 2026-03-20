@@ -68,107 +68,168 @@ public class BillingAuditSyncService {
      * @return response containing sync statistics and results
      * @throws CybersourceException if sync operation fails
      */
+    // Replace ONLY the syncBillingAudit(...) method with the refactored one below,
+// and add the private helper methods shown further down in the same class.
+
     @Transactional
     public BillingAuditSyncResponse syncBillingAudit(BillingAuditSyncRequest request) throws CybersourceException {
         logger.info("Starting billing audit sync operation");
         LocalDateTime operationStartTime = LocalDateTime.now();
-        
+
         try {
-            // Generate unique batch number for this sync operation
-            String batchNumber = UUID.randomUUID().toString();
-            logger.info("Billing batch number: {}", batchNumber);
-            
-            // Determine sync time window
-            SyncWindow syncWindow = determineSyncWindow(request);
-            logger.info("Sync window: {} to {}", syncWindow.getStartTime(), syncWindow.getEndTime());
-            
-            // Update sync information status to IN_PROGRESS
-            BillingAuditSyncInformation syncInfo = updateSyncStatus(syncWindow, "IN_PROGRESS", operationStartTime);
-            
-            // Fetch data from source collections
-            List<TokenAudit> tokenAudits = fetchTokenAudits(syncWindow);
-            List<FetchInformationAudit> fetchInfoAudits = fetchFetchInformationAudits(syncWindow);
-            List<TokenEvents> tokenEvents = fetchTokenEvents(syncWindow);
-            
+            SyncContext ctx = initializeSyncContext(request, operationStartTime);
+
+            SourceData sourceData = fetchSourceData(ctx.syncWindow);
+
             logger.info("Fetched {} TokenAudits, {} FetchInformationAudits, {} TokenEvents",
-                    tokenAudits.size(), fetchInfoAudits.size(), tokenEvents.size());
-            
-            // Transform and create billing audit records
-            List<BillingAudit> billingAudits = new ArrayList<>();
-            List<String> sampleReferenceNumbers = new ArrayList<>();
-            
-            // Process TokenAudits
-            for (TokenAudit tokenAudit : tokenAudits) {
-                BillingAudit billingAudit = createBillingAuditFromTokenAudit(tokenAudit, batchNumber);
-                billingAudits.add(billingAudit);
-                if (sampleReferenceNumbers.size() < 10) {
-                    sampleReferenceNumbers.add(billingAudit.getBillingReferenceNumber());
-                }
-            }
-            
-            // Process FetchInformationAudits
-            for (FetchInformationAudit fetchInfoAudit : fetchInfoAudits) {
-                BillingAudit billingAudit = createBillingAuditFromFetchInfoAudit(fetchInfoAudit, batchNumber);
-                billingAudits.add(billingAudit);
-                if (sampleReferenceNumbers.size() < 10) {
-                    sampleReferenceNumbers.add(billingAudit.getBillingReferenceNumber());
-                }
-            }
-            
-            // Process TokenEvents (if needed for lifecycle management tracking)
-            for (TokenEvents tokenEvent : tokenEvents) {
-                BillingAudit billingAudit = createBillingAuditFromTokenEvent(tokenEvent, batchNumber);
-                billingAudits.add(billingAudit);
-                if (sampleReferenceNumbers.size() < 10) {
-                    sampleReferenceNumbers.add(billingAudit.getBillingReferenceNumber());
-                }
-            }
-            
-            // Batch insert billing audit records
-            if (!billingAudits.isEmpty()) {
-                billingAuditRepository.saveAll(billingAudits);
-                logger.info("Saved {} billing audit records", billingAudits.size());
-            }
-            
-            // Update sync information with success status
+                    sourceData.tokenAudits.size(), sourceData.fetchInfoAudits.size(), sourceData.tokenEvents.size());
+
+            BillingAuditBuildResult buildResult = buildBillingAudits(
+                    sourceData.tokenAudits,
+                    sourceData.fetchInfoAudits,
+                    sourceData.tokenEvents,
+                    ctx.batchNumber
+            );
+
+            saveBillingAuditsIfAny(buildResult.billingAudits);
+
             LocalDateTime operationEndTime = LocalDateTime.now();
-            syncInfo = updateSyncCompletion(syncInfo, syncWindow.getEndTime(), billingAudits.size(), "SUCCESS", operationEndTime);
-            
-            // Build response
-            return BillingAuditSyncResponse.builder()
-                    .success(true)
-                    .message("Billing audit sync completed successfully")
-                    .billingBatchNumber(batchNumber)
-                    .syncStartTime(syncWindow.getStartTime())
-                    .syncEndTime(syncWindow.getEndTime())
-                    .operationStartedAt(operationStartTime)
-                    .operationCompletedAt(operationEndTime)
-                    .tokenAuditCount(tokenAudits.size())
-                    .fetchInfoAuditCount(fetchInfoAudits.size())
-                    .tokenEventsCount(tokenEvents.size())
-                    .totalRecordsCreated(billingAudits.size())
-                    .sampleBillingReferenceNumbers(sampleReferenceNumbers)
-                    .build();
-                    
+            updateSyncCompletion(ctx.syncInfo, ctx.syncWindow.getEndTime(), buildResult.billingAudits.size(), "SUCCESS", operationEndTime);
+
+            return buildSuccessResponse(ctx, sourceData, buildResult, operationStartTime, operationEndTime);
+
         } catch (OptimisticLockingFailureException e) {
             logger.error("Concurrent sync operation detected", e);
             throw new CybersourceException("Another sync operation is in progress. Please try again later.");
         } catch (Exception e) {
             logger.error("Billing audit sync failed", e);
-            
-            // Update sync information with failure status
-            try {
-                BillingAuditSyncInformation syncInfo = syncInformationRepository.findSyncInfo();
-                if (syncInfo != null) {
-                    syncInfo.setLastSyncStatus("FAILURE");
-                    syncInfo.setUpdatedAt(LocalDateTime.now());
-                    syncInformationRepository.save(syncInfo);
-                }
-            } catch (Exception ex) {
-                logger.error("Failed to update sync status to FAILURE", ex);
-            }
-            
+            markSyncFailureSafely();
             throw new CybersourceException("Billing audit sync failed: " + e.getMessage(), e);
+        }
+    }
+
+    /** Initializes batch number, sync window and persists sync status as IN_PROGRESS. */
+    private SyncContext initializeSyncContext(BillingAuditSyncRequest request, LocalDateTime operationStartTime) {
+        String batchNumber = UUID.randomUUID().toString();
+        logger.info("Billing batch number: {}", batchNumber);
+
+        SyncWindow syncWindow = determineSyncWindow(request);
+        logger.info("Sync window: {} to {}", syncWindow.getStartTime(), syncWindow.getEndTime());
+
+        BillingAuditSyncInformation syncInfo = updateSyncStatus(syncWindow, "IN_PROGRESS", operationStartTime);
+        return new SyncContext(batchNumber, syncWindow, syncInfo);
+    }
+
+    /** Fetches all source collections for the given window. */
+    private SourceData fetchSourceData(SyncWindow syncWindow) {
+        List<TokenAudit> tokenAudits = fetchTokenAudits(syncWindow);
+        List<FetchInformationAudit> fetchInfoAudits = fetchFetchInformationAudits(syncWindow);
+        List<TokenEvents> tokenEvents = fetchTokenEvents(syncWindow);
+        return new SourceData(tokenAudits, fetchInfoAudits, tokenEvents);
+    }
+
+    /** Builds BillingAudit records and collects up to 10 sample reference numbers. */
+    private BillingAuditBuildResult buildBillingAudits(
+            List<TokenAudit> tokenAudits,
+            List<FetchInformationAudit> fetchInfoAudits,
+            List<TokenEvents> tokenEvents,
+            String batchNumber) {
+
+        List<BillingAudit> billingAudits = new ArrayList<>(tokenAudits.size() + fetchInfoAudits.size() + tokenEvents.size());
+        List<String> sampleReferenceNumbers = new ArrayList<>(10);
+
+        tokenAudits.forEach(a -> addAudit(billingAudits, sampleReferenceNumbers, createBillingAuditFromTokenAudit(a, batchNumber)));
+        fetchInfoAudits.forEach(a -> addAudit(billingAudits, sampleReferenceNumbers, createBillingAuditFromFetchInfoAudit(a, batchNumber)));
+        tokenEvents.forEach(e -> addAudit(billingAudits, sampleReferenceNumbers, createBillingAuditFromTokenEvent(e, batchNumber)));
+
+        return new BillingAuditBuildResult(billingAudits, sampleReferenceNumbers);
+    }
+
+    private void addAudit(List<BillingAudit> billingAudits, List<String> sampleReferenceNumbers, BillingAudit billingAudit) {
+        billingAudits.add(billingAudit);
+        if (sampleReferenceNumbers.size() < 10) {
+            sampleReferenceNumbers.add(billingAudit.getBillingReferenceNumber());
+        }
+    }
+
+    private void saveBillingAuditsIfAny(List<BillingAudit> billingAudits) {
+        if (billingAudits.isEmpty()) {
+            return;
+        }
+        billingAuditRepository.saveAll(billingAudits);
+        logger.info("Saved {} billing audit records", billingAudits.size());
+    }
+
+    private BillingAuditSyncResponse buildSuccessResponse(
+            SyncContext ctx,
+            SourceData sourceData,
+            BillingAuditBuildResult buildResult,
+            LocalDateTime operationStartTime,
+            LocalDateTime operationEndTime) {
+
+        return BillingAuditSyncResponse.builder()
+                .success(true)
+                .message("Billing audit sync completed successfully")
+                .billingBatchNumber(ctx.batchNumber)
+                .syncStartTime(ctx.syncWindow.getStartTime())
+                .syncEndTime(ctx.syncWindow.getEndTime())
+                .operationStartedAt(operationStartTime)
+                .operationCompletedAt(operationEndTime)
+                .tokenAuditCount(sourceData.tokenAudits.size())
+                .fetchInfoAuditCount(sourceData.fetchInfoAudits.size())
+                .tokenEventsCount(sourceData.tokenEvents.size())
+                .totalRecordsCreated(buildResult.billingAudits.size())
+                .sampleBillingReferenceNumbers(buildResult.sampleReferenceNumbers)
+                .build();
+    }
+
+    /** Best-effort failure status update, never throws. */
+    private void markSyncFailureSafely() {
+        try {
+            BillingAuditSyncInformation syncInfo = syncInformationRepository.findSyncInfo();
+            if (syncInfo == null) {
+                return;
+            }
+            syncInfo.setLastSyncStatus("FAILURE");
+            syncInfo.setUpdatedAt(LocalDateTime.now());
+            syncInformationRepository.save(syncInfo);
+        } catch (Exception ex) {
+            logger.error("Failed to update sync status to FAILURE", ex);
+        }
+    }
+
+    /** Small structs to keep method signatures clean. */
+    private static class SyncContext {
+        private final String batchNumber;
+        private final SyncWindow syncWindow;
+        private final BillingAuditSyncInformation syncInfo;
+
+        private SyncContext(String batchNumber, SyncWindow syncWindow, BillingAuditSyncInformation syncInfo) {
+            this.batchNumber = batchNumber;
+            this.syncWindow = syncWindow;
+            this.syncInfo = syncInfo;
+        }
+    }
+
+    private static class SourceData {
+        private final List<TokenAudit> tokenAudits;
+        private final List<FetchInformationAudit> fetchInfoAudits;
+        private final List<TokenEvents> tokenEvents;
+
+        private SourceData(List<TokenAudit> tokenAudits, List<FetchInformationAudit> fetchInfoAudits, List<TokenEvents> tokenEvents) {
+            this.tokenAudits = tokenAudits;
+            this.fetchInfoAudits = fetchInfoAudits;
+            this.tokenEvents = tokenEvents;
+        }
+    }
+
+    private static class BillingAuditBuildResult {
+        private final List<BillingAudit> billingAudits;
+        private final List<String> sampleReferenceNumbers;
+
+        private BillingAuditBuildResult(List<BillingAudit> billingAudits, List<String> sampleReferenceNumbers) {
+            this.billingAudits = billingAudits;
+            this.sampleReferenceNumbers = sampleReferenceNumbers;
         }
     }
     
