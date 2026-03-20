@@ -458,6 +458,124 @@ curl -X POST http://localhost:8080/api/v1/billing/audits/sync \
   }'
 ```
 
+### 7. Get Merchant List by Month and Year
+
+Retrieves a list of unique merchant token registration IDs from the BillingAudit collection for a specific month and year.
+
+**Endpoint:** `GET /api/v1/billing/merchants/{month}/{year}`
+
+**Path Parameters:**
+- `month`: Month (1-12)
+- `year`: Year (2020-2100)
+
+**Response (200 OK):**
+```json
+[
+  "merchant-001",
+  "merchant-002",
+  "merchant-003"
+]
+```
+
+**Empty Result (200 OK):**
+```json
+[]
+```
+
+**Validation Error (400 Bad Request):**
+- Invalid month (not between 1-12)
+- Invalid year (not between 2020-2100)
+
+**Example cURL:**
+```bash
+# Get merchants for January 2025
+curl -X GET http://localhost:8080/api/v1/billing/merchants/1/2025
+
+# Get merchants for December 2025
+curl -X GET http://localhost:8080/api/v1/billing/merchants/12/2025
+```
+
+**Key Features:**
+- Returns distinct and sorted merchant IDs
+- Filters by `eventTimeStamp` month and year
+- Efficient MongoDB query with projection
+- Null and blank merchant IDs are filtered out
+
+### 8. Get Token Events by Merchant
+
+Retrieves token event information for a specific merchant and time period from the BillingAudit collection.
+
+**Endpoint:** `GET /api/v1/billing/token-events/{merchantTokenRegistrationId}/{month}/{year}`
+
+**Path Parameters:**
+- `merchantTokenRegistrationId`: Merchant token registration ID
+- `month`: Month (1-12)
+- `year`: Year (2020-2100)
+
+**Response (200 OK):**
+```json
+[
+  {
+    "traceId": "trace-001",
+    "transactionType": "NetworkTokenProcessing",
+    "timestamp": "2025-01-15T10:30:00",
+    "eventStatus": true
+  },
+  {
+    "traceId": "trace-002",
+    "transactionType": "Request Cryptogram",
+    "timestamp": "2025-01-20T14:45:00",
+    "eventStatus": false
+  },
+  {
+    "traceId": "trace-003",
+    "transactionType": "TokenLifeCycleManagement",
+    "timestamp": "2025-01-25T16:00:00",
+    "eventStatus": true
+  }
+]
+```
+
+**TokenInfo Fields:**
+- `traceId`: Trace ID reference from the billing audit record
+- `transactionType`: Event type (NetworkTokenProcessing, Request Cryptogram, TokenLifeCycleManagement)
+- `timestamp`: Event timestamp
+- `eventStatus`: Boolean indicating success (true) or failure (false)
+
+**Empty Result (200 OK):**
+```json
+[]
+```
+
+**Validation Errors (400 Bad Request):**
+- Null or empty merchant token registration ID
+- Invalid month (not between 1-12)
+- Invalid year (not between 2020-2100)
+
+**Example cURL:**
+```bash
+# Get token events for merchant-001 in January 2025
+curl -X GET http://localhost:8080/api/v1/billing/token-events/merchant-001/1/2025
+
+# Get token events for merchant-002 in December 2025
+curl -X GET http://localhost:8080/api/v1/billing/token-events/merchant-002/12/2025
+```
+
+**Key Features:**
+- Returns all token events for the specified merchant and time period
+- Maps `eventType` to boolean `eventStatus` (Success → true, Failure → false)
+- Filters by `eventTimeStamp` month and year
+- Handles leap years and month boundaries correctly
+
+# Sync with custom time window
+curl -X POST http://localhost:8080/api/v1/billing/audits/sync \
+  -H "Content-Type: application/json" \
+  -d '{
+    "startTime": "2025-01-01T00:00:00",
+    "endTime": "2025-01-02T00:00:00"
+  }'
+```
+
 **Error Response (500):**
 ```json
 {
