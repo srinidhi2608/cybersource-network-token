@@ -2,6 +2,7 @@ package com.example.cybersource.repository;
 
 import com.example.cybersource.entity.BillingAudit;
 import org.springframework.data.mongodb.repository.MongoRepository;
+import org.springframework.data.mongodb.repository.Query;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
@@ -57,4 +58,24 @@ public interface BillingAuditRepository extends MongoRepository<BillingAudit, St
      * @return count of records
      */
     long countByBillingBatchNumber(String billingBatchNumber);
+    
+    /**
+     * Find billing audit records within a time range (eventTimeStamp).
+     *
+     * @param startTime start of the time range
+     * @param endTime end of the time range
+     * @return list of billing audit records
+     */
+    List<BillingAudit> findByEventTimeStampBetween(LocalDateTime startTime, LocalDateTime endTime);
+    
+    /**
+     * Find distinct merchant token registration IDs within a time range.
+     * Uses MongoDB aggregation to return unique merchant IDs.
+     *
+     * @param startTime start of the time range
+     * @param endTime end of the time range
+     * @return list of distinct merchant token registration IDs
+     */
+    @Query(value = "{ 'eventTimeStamp': { $gte: ?0, $lte: ?1 } }", fields = "{ 'merchantTokenRegistrationId': 1 }")
+    List<BillingAudit> findByEventTimeStampBetweenWithMerchantIdOnly(LocalDateTime startTime, LocalDateTime endTime);
 }
