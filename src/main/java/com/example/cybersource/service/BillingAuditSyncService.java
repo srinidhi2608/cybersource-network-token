@@ -19,7 +19,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -36,6 +38,7 @@ public class BillingAuditSyncService {
     private final TokenAuditRepository tokenAuditRepository;
     private final FetchInformationAuditRepository fetchInformationAuditRepository;
     private final TokenEventsRepository tokenEventsRepository;
+    private final TokenTransactionRepository tokenTransactionRepository;
     private final BillingAuditRepository billingAuditRepository;
     private final BillingAuditSyncInformationRepository syncInformationRepository;
     private final BillingReferenceNumberGenerator referenceNumberGenerator;
@@ -50,12 +53,14 @@ public class BillingAuditSyncService {
             TokenAuditRepository tokenAuditRepository,
             FetchInformationAuditRepository fetchInformationAuditRepository,
             TokenEventsRepository tokenEventsRepository,
+            TokenTransactionRepository tokenTransactionRepository,
             BillingAuditRepository billingAuditRepository,
             BillingAuditSyncInformationRepository syncInformationRepository,
             BillingReferenceNumberGenerator referenceNumberGenerator) {
         this.tokenAuditRepository = tokenAuditRepository;
         this.fetchInformationAuditRepository = fetchInformationAuditRepository;
         this.tokenEventsRepository = tokenEventsRepository;
+        this.tokenTransactionRepository = tokenTransactionRepository;
         this.billingAuditRepository = billingAuditRepository;
         this.syncInformationRepository = syncInformationRepository;
         this.referenceNumberGenerator = referenceNumberGenerator;
@@ -138,11 +143,61 @@ public class BillingAuditSyncService {
         List<BillingAudit> billingAudits = new ArrayList<>(tokenAudits.size() + fetchInfoAudits.size() + tokenEvents.size());
         List<String> sampleReferenceNumbers = new ArrayList<>(10);
 
+        // Build merchant ID lookup map for FetchInformationAudits and TokenEvents
+        // This optimizes DB access: 1 batch query instead of N individual queries
+        Map<String, String> paymentTokenToMerchantIdMap = buildMerchantIdLookupMap(fetchInfoAudits, tokenEvents);
+        
+        // TokenAudits already have merchantTokenRegistrationId - no lookup needed
         tokenAudits.forEach(a -> addAudit(billingAudits, sampleReferenceNumbers, createBillingAuditFromTokenAudit(a, batchNumber)));
-        fetchInfoAudits.forEach(a -> addAudit(billingAudits, sampleReferenceNumbers, createBillingAuditFromFetchInfoAudit(a, batchNumber)));
-        tokenEvents.forEach(e -> addAudit(billingAudits, sampleReferenceNumbers, createBillingAuditFromTokenEvent(e, batchNumber)));
+        
+        // FetchInformationAudits and TokenEvents need merchantTokenRegistrationId from TokenTransactions
+        fetchInfoAudits.forEach(a -> addAudit(billingAudits, sampleReferenceNumbers, createBillingAuditFromFetchInfoAudit(a, batchNumber, paymentTokenToMerchantIdMap)));
+        tokenEvents.forEach(e -> addAudit(billingAudits, sampleReferenceNumbers, createBillingAuditFromTokenEvent(e, batchNumber, paymentTokenToMerchantIdMap)));
 
         return new BillingAuditBuildResult(billingAudits, sampleReferenceNumbers);
+    }
+    
+    /**
+     * Builds a lookup map of paymentTokenId -> merchantTokenRegistrationId.
+     * Performs a single batch query to TokenTransactions for all needed paymentTokenIds.
+     * This minimizes database round trips for better performance.
+     */
+    private Map<String, String> buildMerchantIdLookupMap(
+            List<FetchInformationAudit> fetchInfoAudits,
+            List<TokenEvents> tokenEvents) {
+        
+        // Collect all unique paymentTokenIds that need merchantTokenRegistrationId lookup
+        List<String> paymentTokenIds = new ArrayList<>();
+        
+        fetchInfoAudits.stream()
+                .map(FetchInformationAudit::getPaymentTokenId)
+                .filter(id -> id != null && !id.isBlank())
+                .forEach(paymentTokenIds::add);
+        
+        tokenEvents.stream()
+                .map(TokenEvents::getPaymentTokenId)
+                .filter(id -> id != null && !id.isBlank())
+                .forEach(paymentTokenIds::add);
+        
+        // If no paymentTokenIds to lookup, return empty map
+        if (paymentTokenIds.isEmpty()) {
+            logger.debug("No paymentTokenIds to lookup for merchantTokenRegistrationId");
+            return new HashMap<>();
+        }
+        
+        // Perform single batch query for all paymentTokenIds
+        logger.info("Batch querying TokenTransactions for {} paymentTokenIds", paymentTokenIds.size());
+        List<TokenTransaction> tokenTransactions = tokenTransactionRepository.findByPaymentTokenIdIn(paymentTokenIds);
+        logger.info("Found {} matching TokenTransactions", tokenTransactions.size());
+        
+        // Build lookup map
+        return tokenTransactions.stream()
+                .filter(tt -> tt.getMerchantTokenRegistrationId() != null)
+                .collect(Collectors.toMap(
+                        TokenTransaction::getPaymentTokenId,
+                        TokenTransaction::getMerchantTokenRegistrationId,
+                        (existing, replacement) -> existing // Keep first if duplicates
+                ));
     }
 
     private void addAudit(List<BillingAudit> billingAudits, List<String> sampleReferenceNumbers, BillingAudit billingAudit) {
@@ -309,8 +364,13 @@ public class BillingAuditSyncService {
     /**
      * Creates a BillingAudit record from a FetchInformationAudit record.
      * TraceIdEvent = "Request Cryptogram" for FetchCryptogram or LCM event references
+     * Looks up merchantTokenRegistrationId from the provided map.
      */
-    private BillingAudit createBillingAuditFromFetchInfoAudit(FetchInformationAudit fetchInfoAudit, String batchNumber) {
+    private BillingAudit createBillingAuditFromFetchInfoAudit(
+            FetchInformationAudit fetchInfoAudit,
+            String batchNumber,
+            Map<String, String> paymentTokenToMerchantIdMap) {
+        
         EventType eventType = determineEventType(fetchInfoAudit.getIsRequestComplete(), null);
         
         // Determine trace ID event based on event reference
@@ -324,11 +384,20 @@ public class BillingAuditSyncService {
             traceIdEvent = TraceIdEventType.REQUEST_CRYPTOGRAM.getDisplayName();
         }
         
+        // Lookup merchantTokenRegistrationId from TokenTransactions
+        String merchantTokenRegistrationId = paymentTokenToMerchantIdMap.get(fetchInfoAudit.getPaymentTokenId());
+        
+        if (merchantTokenRegistrationId == null || merchantTokenRegistrationId.isBlank()) {
+            logger.warn("No merchantTokenRegistrationId found for paymentTokenId: {} in FetchInformationAudit (traceId: {})",
+                    fetchInfoAudit.getPaymentTokenId(), fetchInfoAudit.getTraceId());
+        }
+        
         return BillingAudit.builder()
                 .traceIdReference(fetchInfoAudit.getTraceId())
                 .traceIdEvent(traceIdEvent)
                 .eventTimeStamp(fetchInfoAudit.getTimestamp())
                 .eventType(eventType.getDisplayName())
+                .merchantTokenRegistrationId(merchantTokenRegistrationId)
                 .billingReferenceNumber(referenceNumberGenerator.generateUniqueReferenceNumber())
                 .billingBatchNumber(batchNumber)
                 .timestamp(LocalDateTime.now())
@@ -342,16 +411,30 @@ public class BillingAuditSyncService {
     /**
      * Creates a BillingAudit record from a TokenEvents record.
      * TraceIdEvent = "TokenLifeCycleManagement"
+     * Looks up merchantTokenRegistrationId from the provided map.
      */
-    private BillingAudit createBillingAuditFromTokenEvent(TokenEvents tokenEvent, String batchNumber) {
+    private BillingAudit createBillingAuditFromTokenEvent(
+            TokenEvents tokenEvent,
+            String batchNumber,
+            Map<String, String> paymentTokenToMerchantIdMap) {
+        
         // Token events are generally successful lifecycle notifications
         EventType eventType = EventType.SUCCESS;
+        
+        // Lookup merchantTokenRegistrationId from TokenTransactions
+        String merchantTokenRegistrationId = paymentTokenToMerchantIdMap.get(tokenEvent.getPaymentTokenId());
+        
+        if (merchantTokenRegistrationId == null || merchantTokenRegistrationId.isBlank()) {
+            logger.warn("No merchantTokenRegistrationId found for paymentTokenId: {} in TokenEvent (traceId: {})",
+                    tokenEvent.getPaymentTokenId(), tokenEvent.getTraceId());
+        }
         
         return BillingAudit.builder()
                 .traceIdReference(tokenEvent.getTraceId())
                 .traceIdEvent(TraceIdEventType.TOKEN_LIFECYCLE_MANAGEMENT.getDisplayName())
                 .eventTimeStamp(tokenEvent.getTimestamp())
                 .eventType(eventType.getDisplayName())
+                .merchantTokenRegistrationId(merchantTokenRegistrationId)
                 .billingReferenceNumber(referenceNumberGenerator.generateUniqueReferenceNumber())
                 .billingBatchNumber(batchNumber)
                 .timestamp(LocalDateTime.now())

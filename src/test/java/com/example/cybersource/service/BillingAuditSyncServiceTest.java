@@ -44,6 +44,9 @@ class BillingAuditSyncServiceTest {
     private TokenEventsRepository tokenEventsRepository;
     
     @Mock
+    private TokenTransactionRepository tokenTransactionRepository;
+    
+    @Mock
     private BillingAuditRepository billingAuditRepository;
     
     @Mock
@@ -417,4 +420,292 @@ class BillingAuditSyncServiceTest {
                 .timestamp(LocalDateTime.now())
                 .build();
     }
+    
+    // ========== NEW TESTS FOR MERCHANT ID LOOKUP ==========
+    
+    @Test
+    void testSyncBillingAudit_FetchInfoAudit_WithMerchantIdLookup() throws CybersourceException {
+        // Arrange - FetchInformationAudit needs merchantTokenRegistrationId from TokenTransaction
+        FetchInformationAudit fetchInfoAudit = createFetchInfoAudit("trace-fetch-1", "FetchCryptogram", true);
+        fetchInfoAudit.setPaymentTokenId("payment-token-100");
+        List<FetchInformationAudit> fetchInfoAudits = Arrays.asList(fetchInfoAudit);
+        
+        // Create matching TokenTransaction with merchantTokenRegistrationId
+        TokenTransaction tokenTransaction = TokenTransaction.builder()
+                .id("tt-1")
+                .paymentTokenId("payment-token-100")
+                .merchantTokenRegistrationId("merchant-ABC")
+                .instrumentIdentifierId("instrument-100")
+                .build();
+        
+        when(syncInformationRepository.findSyncInfo()).thenReturn(createSyncInfo(LocalDateTime.now().minusHours(1)));
+        when(tokenAuditRepository.findByTimestampBetween(any(), any())).thenReturn(new ArrayList<>());
+        when(fetchInformationAuditRepository.findByTimestampBetween(any(), any())).thenReturn(fetchInfoAudits);
+        when(tokenEventsRepository.findByTimestampBetween(any(), any())).thenReturn(new ArrayList<>());
+        when(tokenTransactionRepository.findByPaymentTokenIdIn(anyList())).thenReturn(Arrays.asList(tokenTransaction));
+        when(referenceNumberGenerator.generateUniqueReferenceNumber()).thenReturn("BILL-1234567890-00000001");
+        when(billingAuditRepository.saveAll(anyList())).thenAnswer(invocation -> {
+            List<BillingAudit> audits = invocation.getArgument(0);
+            assertEquals(1, audits.size());
+            BillingAudit audit = audits.get(0);
+            assertEquals("merchant-ABC", audit.getMerchantTokenRegistrationId());
+            assertEquals("payment-token-100", audit.getPaymentTokenId());
+            assertEquals(TraceIdEventType.REQUEST_CRYPTOGRAM.getDisplayName(), audit.getTraceIdEvent());
+            return audits;
+        });
+        when(syncInformationRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        
+        // Act
+        BillingAuditSyncResponse response = billingAuditSyncService.syncBillingAudit(null);
+        
+        // Assert
+        assertTrue(response.isSuccess());
+        assertEquals(1, response.getTotalRecordsCreated());
+        verify(tokenTransactionRepository).findByPaymentTokenIdIn(anyList());
+    }
+    
+    @Test
+    void testSyncBillingAudit_TokenEvent_WithMerchantIdLookup() throws CybersourceException {
+        // Arrange - TokenEvent needs merchantTokenRegistrationId from TokenTransaction
+        TokenEvents tokenEvent = createTokenEvent("trace-event-1");
+        tokenEvent.setPaymentTokenId("payment-token-200");
+        List<TokenEvents> tokenEvents = Arrays.asList(tokenEvent);
+        
+        // Create matching TokenTransaction with merchantTokenRegistrationId
+        TokenTransaction tokenTransaction = TokenTransaction.builder()
+                .id("tt-2")
+                .paymentTokenId("payment-token-200")
+                .merchantTokenRegistrationId("merchant-XYZ")
+                .instrumentIdentifierId("instrument-200")
+                .build();
+        
+        when(syncInformationRepository.findSyncInfo()).thenReturn(createSyncInfo(LocalDateTime.now().minusHours(1)));
+        when(tokenAuditRepository.findByTimestampBetween(any(), any())).thenReturn(new ArrayList<>());
+        when(fetchInformationAuditRepository.findByTimestampBetween(any(), any())).thenReturn(new ArrayList<>());
+        when(tokenEventsRepository.findByTimestampBetween(any(), any())).thenReturn(tokenEvents);
+        when(tokenTransactionRepository.findByPaymentTokenIdIn(anyList())).thenReturn(Arrays.asList(tokenTransaction));
+        when(referenceNumberGenerator.generateUniqueReferenceNumber()).thenReturn("BILL-1234567890-00000002");
+        when(billingAuditRepository.saveAll(anyList())).thenAnswer(invocation -> {
+            List<BillingAudit> audits = invocation.getArgument(0);
+            assertEquals(1, audits.size());
+            BillingAudit audit = audits.get(0);
+            assertEquals("merchant-XYZ", audit.getMerchantTokenRegistrationId());
+            assertEquals("payment-token-200", audit.getPaymentTokenId());
+            assertEquals(TraceIdEventType.TOKEN_LIFECYCLE_MANAGEMENT.getDisplayName(), audit.getTraceIdEvent());
+            return audits;
+        });
+        when(syncInformationRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        
+        // Act
+        BillingAuditSyncResponse response = billingAuditSyncService.syncBillingAudit(null);
+        
+        // Assert
+        assertTrue(response.isSuccess());
+        assertEquals(1, response.getTotalRecordsCreated());
+        verify(tokenTransactionRepository).findByPaymentTokenIdIn(anyList());
+    }
+    
+    @Test
+    void testSyncBillingAudit_NoMatchingTokenTransaction_LogsWarning() throws CybersourceException {
+        // Arrange - FetchInformationAudit without matching TokenTransaction
+        FetchInformationAudit fetchInfoAudit = createFetchInfoAudit("trace-fetch-orphan", "FetchCryptogram", true);
+        fetchInfoAudit.setPaymentTokenId("payment-token-orphan");
+        List<FetchInformationAudit> fetchInfoAudits = Arrays.asList(fetchInfoAudit);
+        
+        when(syncInformationRepository.findSyncInfo()).thenReturn(createSyncInfo(LocalDateTime.now().minusHours(1)));
+        when(tokenAuditRepository.findByTimestampBetween(any(), any())).thenReturn(new ArrayList<>());
+        when(fetchInformationAuditRepository.findByTimestampBetween(any(), any())).thenReturn(fetchInfoAudits);
+        when(tokenEventsRepository.findByTimestampBetween(any(), any())).thenReturn(new ArrayList<>());
+        when(tokenTransactionRepository.findByPaymentTokenIdIn(anyList())).thenReturn(new ArrayList<>()); // No match
+        when(referenceNumberGenerator.generateUniqueReferenceNumber()).thenReturn("BILL-1234567890-00000003");
+        when(billingAuditRepository.saveAll(anyList())).thenAnswer(invocation -> {
+            List<BillingAudit> audits = invocation.getArgument(0);
+            assertEquals(1, audits.size());
+            BillingAudit audit = audits.get(0);
+            // MerchantTokenRegistrationId should be null when no match found
+            assertNull(audit.getMerchantTokenRegistrationId());
+            assertEquals("payment-token-orphan", audit.getPaymentTokenId());
+            return audits;
+        });
+        when(syncInformationRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        
+        // Act
+        BillingAuditSyncResponse response = billingAuditSyncService.syncBillingAudit(null);
+        
+        // Assert
+        assertTrue(response.isSuccess());
+        assertEquals(1, response.getTotalRecordsCreated());
+        verify(tokenTransactionRepository).findByPaymentTokenIdIn(anyList());
+    }
+    
+    @Test
+    void testSyncBillingAudit_BatchLookup_MultipleRecords() throws CybersourceException {
+        // Arrange - Multiple FetchInfoAudits and TokenEvents requiring batch lookup
+        FetchInformationAudit fetchInfo1 = createFetchInfoAudit("trace-f1", "FetchCryptogram", true);
+        fetchInfo1.setPaymentTokenId("payment-token-301");
+        FetchInformationAudit fetchInfo2 = createFetchInfoAudit("trace-f2", "LCM", true);
+        fetchInfo2.setPaymentTokenId("payment-token-302");
+        List<FetchInformationAudit> fetchInfoAudits = Arrays.asList(fetchInfo1, fetchInfo2);
+        
+        TokenEvents event1 = createTokenEvent("trace-e1");
+        event1.setPaymentTokenId("payment-token-303");
+        TokenEvents event2 = createTokenEvent("trace-e2");
+        event2.setPaymentTokenId("payment-token-304");
+        List<TokenEvents> tokenEvents = Arrays.asList(event1, event2);
+        
+        // Create matching TokenTransactions
+        List<TokenTransaction> tokenTransactions = Arrays.asList(
+                TokenTransaction.builder()
+                        .paymentTokenId("payment-token-301")
+                        .merchantTokenRegistrationId("merchant-M1")
+                        .build(),
+                TokenTransaction.builder()
+                        .paymentTokenId("payment-token-302")
+                        .merchantTokenRegistrationId("merchant-M2")
+                        .build(),
+                TokenTransaction.builder()
+                        .paymentTokenId("payment-token-303")
+                        .merchantTokenRegistrationId("merchant-M3")
+                        .build(),
+                TokenTransaction.builder()
+                        .paymentTokenId("payment-token-304")
+                        .merchantTokenRegistrationId("merchant-M4")
+                        .build()
+        );
+        
+        when(syncInformationRepository.findSyncInfo()).thenReturn(createSyncInfo(LocalDateTime.now().minusHours(1)));
+        when(tokenAuditRepository.findByTimestampBetween(any(), any())).thenReturn(new ArrayList<>());
+        when(fetchInformationAuditRepository.findByTimestampBetween(any(), any())).thenReturn(fetchInfoAudits);
+        when(tokenEventsRepository.findByTimestampBetween(any(), any())).thenReturn(tokenEvents);
+        when(tokenTransactionRepository.findByPaymentTokenIdIn(anyList())).thenReturn(tokenTransactions);
+        when(referenceNumberGenerator.generateUniqueReferenceNumber())
+                .thenReturn("BILL-1", "BILL-2", "BILL-3", "BILL-4");
+        when(billingAuditRepository.saveAll(anyList())).thenAnswer(invocation -> {
+            List<BillingAudit> audits = invocation.getArgument(0);
+            assertEquals(4, audits.size());
+            // Verify all have merchantTokenRegistrationId populated
+            assertTrue(audits.stream().allMatch(a -> a.getMerchantTokenRegistrationId() != null));
+            return audits;
+        });
+        when(syncInformationRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        
+        // Act
+        BillingAuditSyncResponse response = billingAuditSyncService.syncBillingAudit(null);
+        
+        // Assert
+        assertTrue(response.isSuccess());
+        assertEquals(4, response.getTotalRecordsCreated());
+        // Verify only ONE batch query was made (not 4 separate queries)
+        verify(tokenTransactionRepository, times(1)).findByPaymentTokenIdIn(anyList());
+    }
+    
+    @Test
+    void testSyncBillingAudit_TokenAudit_DoesNotRequireLookup() throws CybersourceException {
+        // Arrange - TokenAudit already has merchantTokenRegistrationId
+        TokenAudit tokenAudit = createTokenAudit("trace-ta-1", true, null);
+        tokenAudit.setMerchantTokenRegistrationId("merchant-direct");
+        List<TokenAudit> tokenAudits = Arrays.asList(tokenAudit);
+        
+        when(syncInformationRepository.findSyncInfo()).thenReturn(createSyncInfo(LocalDateTime.now().minusHours(1)));
+        when(tokenAuditRepository.findByTimestampBetween(any(), any())).thenReturn(tokenAudits);
+        when(fetchInformationAuditRepository.findByTimestampBetween(any(), any())).thenReturn(new ArrayList<>());
+        when(tokenEventsRepository.findByTimestampBetween(any(), any())).thenReturn(new ArrayList<>());
+        // No batch lookup needed when only TokenAudits (they already have merchantTokenRegistrationId)
+        when(referenceNumberGenerator.generateUniqueReferenceNumber()).thenReturn("BILL-1234567890-00000005");
+        when(billingAuditRepository.saveAll(anyList())).thenAnswer(invocation -> {
+            List<BillingAudit> audits = invocation.getArgument(0);
+            assertEquals(1, audits.size());
+            BillingAudit audit = audits.get(0);
+            assertEquals("merchant-direct", audit.getMerchantTokenRegistrationId());
+            return audits;
+        });
+        when(syncInformationRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        
+        // Act
+        BillingAuditSyncResponse response = billingAuditSyncService.syncBillingAudit(null);
+        
+        // Assert
+        assertTrue(response.isSuccess());
+        assertEquals(1, response.getTotalRecordsCreated());
+        // Verify no batch lookup was needed (no FetchInfoAudits or TokenEvents)
+        verify(tokenTransactionRepository, never()).findByPaymentTokenIdIn(anyList());
+    }
+    
+    @Test
+    void testSyncBillingAudit_AllFieldsPopulated_FetchInfoAudit() throws CybersourceException {
+        // Arrange - Verify all fields are populated in BillingAudit
+        FetchInformationAudit fetchInfoAudit = FetchInformationAudit.builder()
+                .id("fetch-1")
+                .traceId("trace-complete")
+                .paymentTokenId("payment-token-500")
+                .informationType("Cryptogram")
+                .eventReference("FetchCryptogram")
+                .isRequestComplete(true)
+                .timestamp(LocalDateTime.of(2025, 1, 15, 10, 30))
+                .externalReference("ext-ref-complete")
+                .build();
+        
+        TokenTransaction tokenTransaction = TokenTransaction.builder()
+                .paymentTokenId("payment-token-500")
+                .merchantTokenRegistrationId("merchant-complete")
+                .build();
+        
+        when(syncInformationRepository.findSyncInfo()).thenReturn(createSyncInfo(LocalDateTime.now().minusHours(1)));
+        when(tokenAuditRepository.findByTimestampBetween(any(), any())).thenReturn(new ArrayList<>());
+        when(fetchInformationAuditRepository.findByTimestampBetween(any(), any()))
+                .thenReturn(Arrays.asList(fetchInfoAudit));
+        when(tokenEventsRepository.findByTimestampBetween(any(), any())).thenReturn(new ArrayList<>());
+        when(tokenTransactionRepository.findByPaymentTokenIdIn(anyList()))
+                .thenReturn(Arrays.asList(tokenTransaction));
+        when(referenceNumberGenerator.generateUniqueReferenceNumber()).thenReturn("BILL-1234567890-99999");
+        when(billingAuditRepository.saveAll(anyList())).thenAnswer(invocation -> {
+            List<BillingAudit> audits = invocation.getArgument(0);
+            assertEquals(1, audits.size());
+            BillingAudit audit = audits.get(0);
+            
+            // Verify all fields are populated
+            assertNotNull(audit.getTraceIdReference(), "traceIdReference should be populated");
+            assertEquals("trace-complete", audit.getTraceIdReference());
+            
+            assertNotNull(audit.getTraceIdEvent(), "traceIdEvent should be populated");
+            assertEquals(TraceIdEventType.REQUEST_CRYPTOGRAM.getDisplayName(), audit.getTraceIdEvent());
+            
+            assertNotNull(audit.getEventTimeStamp(), "eventTimeStamp should be populated");
+            assertEquals(LocalDateTime.of(2025, 1, 15, 10, 30), audit.getEventTimeStamp());
+            
+            assertNotNull(audit.getEventType(), "eventType should be populated");
+            assertEquals(EventType.SUCCESS.getDisplayName(), audit.getEventType());
+            
+            assertNotNull(audit.getMerchantTokenRegistrationId(), "merchantTokenRegistrationId should be populated");
+            assertEquals("merchant-complete", audit.getMerchantTokenRegistrationId());
+            
+            assertNotNull(audit.getBillingReferenceNumber(), "billingReferenceNumber should be populated");
+            assertEquals("BILL-1234567890-99999", audit.getBillingReferenceNumber());
+            
+            assertNotNull(audit.getBillingBatchNumber(), "billingBatchNumber should be populated");
+            
+            assertNotNull(audit.getTimestamp(), "timestamp should be populated");
+            
+            assertNotNull(audit.getPaymentTokenId(), "paymentTokenId should be populated");
+            assertEquals("payment-token-500", audit.getPaymentTokenId());
+            
+            assertNotNull(audit.getExternalReference(), "externalReference should be populated");
+            assertEquals("ext-ref-complete", audit.getExternalReference());
+            
+            assertNotNull(audit.getNotes(), "notes should be populated");
+            assertTrue(audit.getNotes().contains("Cryptogram"));
+            assertTrue(audit.getNotes().contains("FetchCryptogram"));
+            
+            return audits;
+        });
+        when(syncInformationRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        
+        // Act
+        BillingAuditSyncResponse response = billingAuditSyncService.syncBillingAudit(null);
+        
+        // Assert
+        assertTrue(response.isSuccess());
+        assertEquals(1, response.getTotalRecordsCreated());
+    }
 }
+

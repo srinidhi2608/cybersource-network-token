@@ -4,6 +4,7 @@ import com.example.cybersource.entity.TokenTransaction;
 import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -35,4 +36,13 @@ public interface TokenTransactionRepository extends MongoRepository<TokenTransac
      * @return true if exists, false otherwise
      */
     boolean existsByInstrumentIdentifierId(String instrumentIdentifierId);
+    
+    /**
+     * Find all token transactions by payment token IDs (batch query).
+     * Used for efficient bulk lookups to get merchantTokenRegistrationId.
+     *
+     * @param paymentTokenIds list of payment token IDs
+     * @return list of matching token transactions
+     */
+    List<TokenTransaction> findByPaymentTokenIdIn(List<String> paymentTokenIds);
 }
