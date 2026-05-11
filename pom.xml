@@ -131,6 +131,14 @@
 			<artifactId>junit-platform-suite</artifactId>
 			<scope>test</scope>
 		</dependency>
+
+		<!-- Apache POI for Excel-driven test data -->
+		<dependency>
+			<groupId>org.apache.poi</groupId>
+			<artifactId>poi-ooxml</artifactId>
+			<version>5.2.5</version>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
 
 	<build>
@@ -159,7 +167,42 @@
 					</excludes>
 				</configuration>
 			</plugin>
+
+			<!-- Masterthought Cucumber Reporting: generates rich HTML coverage after tests -->
+			<plugin>
+				<groupId>net.masterthought</groupId>
+				<artifactId>cucumber-reporting</artifactId>
+				<version>5.8.2</version>
+				<executions>
+					<execution>
+						<id>generate-cucumber-html-report</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>generate</goal>
+						</goals>
+						<configuration>
+							<projectName>${project.artifactId}</projectName>
+							<outputDirectory>${project.build.directory}/cucumber-html-reports</outputDirectory>
+							<jsonFiles>
+								<param>${project.build.directory}/cucumber-reports/cucumber.json</param>
+							</jsonFiles>
+							<checkBuildResult>false</checkBuildResult>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
 		</plugins>
 	</build>
+
+	<reporting>
+		<plugins>
+			<!-- Masterthought Cucumber Reporting for HTML coverage report -->
+			<plugin>
+				<groupId>net.masterthought</groupId>
+				<artifactId>cucumber-reporting</artifactId>
+				<version>5.8.2</version>
+			</plugin>
+		</plugins>
+	</reporting>
 
 </project>

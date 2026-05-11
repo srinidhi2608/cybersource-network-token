@@ -746,21 +746,155 @@ mvn test
 
 **Total:** 47+ unit tests with >80% code coverage
 
-### Cucumber BDD Tests
+### Cucumber BDD Tests — Excel-Driven Approach
 
-Behavioral tests using Cucumber:
+All Cucumber test scenarios are maintained in a single Excel workbook. The Excel file
+is the **single source of truth** for test inputs and expected outcomes; the feature
+files simply reference scenario IDs from the workbook.
 
-```bash
-mvn test -Dtest=CucumberTestRunner
+#### Excel Workbook Location
+
+```
+src/test/resources/test-data/network-token-test-scenarios.xlsx
 ```
 
-**Feature File:** `src/test/resources/features/network_token.feature`
+The workbook contains **three sheets**:
 
-**Scenarios:**
-1. Successfully create a network token
-2. Handle duplicate network token creation
-3. Create cryptogram for existing token
-4. Validation and error scenarios
+| Sheet | What it covers |
+|-------|----------------|
+| **NetworkToken** | Network token creation, duplicate detection, validation errors |
+| **Cryptogram**   | Cryptogram generation for existing / non-existing tokens |
+| **BillingAudit** | Billing audit sync: success paths, error paths, edge cases |
+
+#### Column Layout
+
+**NetworkToken sheet**
+
+| Column | Description |
+|--------|-------------|
+| `ScenarioId` | Unique ID referenced in the `Examples:` table (e.g. `NT_TC_001`) |
+| `ScenarioName` | Short name |
+| `Description` | Plain-English description |
+| `Tags` | Cucumber tags (e.g. `@smoke @happy-path`) |
+| `MerchantId` | Merchant token registration ID |
+| `MerchantStatus` | `ACTIVE` / `INACTIVE` / `NOT_ENROLLED` |
+| `CardNumber` | PAN (test card) |
+| `ExpiryMonth` | MM format |
+| `ExpiryYear` | YYYY format |
+| `ExternalReference` | Unique external reference for the request |
+| `ExpectedOutcome` | `SUCCESS` or `FAILURE` |
+| `ExpectedError` | Error message substring expected in the exception |
+| `ExpectedErrorType` | `CybersourceException` / `ValidationException` |
+| `IsDuplicate` | `true` if token already exists for the card |
+
+**Cryptogram sheet** — same pattern with `PaymentTokenId`, `TokenExists`, etc.
+
+**BillingAudit sheet** — `StartTime`, `EndTime`, `ForceSync`, `BatchSize`,
+`ExpectedSuccess`, `ExpectedStatus`, `ExpectedTotalRecords`, `HasError`, `ErrorMessage`.
+
+---
+
+#### Running the Cucumber tests
+
+```bash
+# Run only the Cucumber suite
+mvn test -Dtest=CucumberTestRunner
+
+# Run all tests (unit + Cucumber)
+mvn test
+
+# Run full verify phase (tests + rich HTML coverage report)
+mvn verify
+```
+
+After `mvn verify`, open the coverage report:
+```
+target/cucumber-html-reports/overview-features.html
+```
+
+A lightweight HTML report is also written after every `mvn test` run:
+```
+target/cucumber-reports/cucumber.html
+```
+
+A JSON report (consumed by the Masterthought plugin) is at:
+```
+target/cucumber-reports/cucumber.json
+```
+
+A timeline view (useful for parallel runs) is at:
+```
+target/cucumber-reports/timeline/index.html
+```
+
+---
+
+#### Adding a new test scenario
+
+1. **Open the Excel workbook** in Excel / LibreOffice Calc:
+   ```
+   src/test/resources/test-data/network-token-test-scenarios.xlsx
+   ```
+
+2. **Add a new row** to the appropriate sheet (`NetworkToken`, `Cryptogram`, or
+   `BillingAudit`).  
+   Give it a unique `ScenarioId` (e.g. `NT_TC_011`), fill in all input and expected
+   outcome columns, and save the file.
+
+3. **Add the matching row** to the `Examples:` table in the corresponding feature file:
+   - Network token / cryptogram → `src/test/resources/features/network_token.feature`
+     or `src/test/resources/features/cryptogram.feature`
+   - Billing audit → `src/test/resources/features/billing_audit.feature`
+
+   Example row to add:
+   ```gherkin
+   | NT_TC_011  | Discover Card Token Creation       |
+   ```
+
+4. **Run the tests** to verify the new scenario passes:
+   ```bash
+   mvn test -Dtest=CucumberTestRunner
+   ```
+
+> **Tip:** If you want to reset the workbook to the baseline data set (e.g. after
+> accidentally overwriting it), run the generator class:
+> ```bash
+> mvn exec:java -Dexec.mainClass="com.example.cybersource.util.ExcelDataGenerator" \
+>               -Dexec.classpathScope="test"
+> ```
+
+---
+
+#### Feature files overview
+
+| Feature file | Sheet | Scenarios |
+|---|---|---|
+| `features/network_token.feature` | NetworkToken | 10 |
+| `features/cryptogram.feature`    | Cryptogram   | 4  |
+| `features/billing_audit.feature` | BillingAudit | 11 |
+
+---
+
+#### How the Excel-driven pipeline works
+
+```
+Excel workbook (.xlsx)
+        │
+        ▼
+ExcelTestDataReader.java      ← loads all rows, caches by ScenarioId
+        │
+        ▼
+Feature file Examples table   ← lists ScenarioIds to run
+        │
+        ▼
+Cucumber Scenario Outline     ← one test execution per row
+        │
+        ▼
+Step definitions              ← look up full data from cache, mock repos, assert response
+        │
+        ▼
+Masterthought HTML report     ← target/cucumber-html-reports/overview-features.html
+```
 
 ### Integration Tests
 

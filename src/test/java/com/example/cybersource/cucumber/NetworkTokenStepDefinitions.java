@@ -1,9 +1,9 @@
 package com.example.cybersource.cucumber;
 
-import com.example.cybersource.dto.CreateCryptogramRequest;
-import com.example.cybersource.dto.CreateCryptogramResponse;
 import com.example.cybersource.dto.CreateNetworkTokenRequest;
 import com.example.cybersource.dto.CreateNetworkTokenResponse;
+import com.example.cybersource.dto.CreateCryptogramRequest;
+import com.example.cybersource.dto.CreateCryptogramResponse;
 import com.example.cybersource.entity.MerchantEnrollResponse;
 import com.example.cybersource.entity.TokenAudit;
 import com.example.cybersource.entity.TokenTransaction;
@@ -13,6 +13,9 @@ import com.example.cybersource.repository.MerchantEnrollResponseRepository;
 import com.example.cybersource.repository.TokenAuditRepository;
 import com.example.cybersource.repository.TokenTransactionRepository;
 import com.example.cybersource.service.*;
+import com.example.cybersource.util.ExcelTestDataReader;
+import com.example.cybersource.util.ExcelTestDataReader.NetworkTokenScenario;
+import com.example.cybersource.util.ExcelTestDataReader.CryptogramScenario;
 import io.cucumber.java.Before;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.Then;
@@ -30,12 +33,26 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
 /**
- * Cucumber step definitions for Network Token Management features.
+ * Cucumber step definitions for Network Token and Cryptogram features.
+ *
+ * <p>All test data (inputs and expected outcomes) is loaded from the Excel workbook:<br>
+ * {@code src/test/resources/test-data/network-token-test-scenarios.xlsx}
+ *
+ * <p>Step flow for both features:
+ * <ol>
+ *   <li>Load the scenario by ID from Excel (Given)</li>
+ *   <li>Execute the service operation (When)</li>
+ *   <li>Assert the response matches the expected outcome (Then)</li>
+ * </ol>
  */
 @CucumberContextConfiguration
-@SpringBootTest
+@SpringBootTest(classes = CucumberTestConfig.class,
+        webEnvironment = SpringBootTest.WebEnvironment.NONE)
 public class NetworkTokenStepDefinitions {
 
+    // -----------------------------------------------------------------------
+    // Collaborators (mocked per-scenario in @Before)
+    // -----------------------------------------------------------------------
     private NetworkTokenService networkTokenService;
     private MerchantEnrollResponseRepository merchantRepository;
     private TokenTransactionRepository tokenTransactionRepository;
@@ -45,28 +62,29 @@ public class NetworkTokenStepDefinitions {
     private CybersourceRestClient cybersourceRestClient;
     private EncryptionService encryptionService;
 
-    private CreateNetworkTokenRequest networkTokenRequest;
-    private CreateCryptogramRequest cryptogramRequest;
+    // -----------------------------------------------------------------------
+    // Per-scenario state
+    // -----------------------------------------------------------------------
+    private NetworkTokenScenario ntScenario;
+    private CryptogramScenario   crScenario;
+
     private CreateNetworkTokenResponse networkTokenResponse;
-    private CreateCryptogramResponse cryptogramResponse;
+    private CreateCryptogramResponse   cryptogramResponse;
     private Exception thrownException;
 
-    private String cardNumber;
-    private String expiryMonth;
-    private String expiryYear;
-    private String merchantId;
-    private String externalReference;
+    // -----------------------------------------------------------------------
+    // Setup
+    // -----------------------------------------------------------------------
 
     @Before
     public void setUp() {
-        // Initialize mocks
-        merchantRepository = Mockito.mock(MerchantEnrollResponseRepository.class);
-        tokenTransactionRepository = Mockito.mock(TokenTransactionRepository.class);
-        tokenAuditRepository = Mockito.mock(TokenAuditRepository.class);
+        merchantRepository            = Mockito.mock(MerchantEnrollResponseRepository.class);
+        tokenTransactionRepository    = Mockito.mock(TokenTransactionRepository.class);
+        tokenAuditRepository          = Mockito.mock(TokenAuditRepository.class);
         fetchInformationAuditRepository = Mockito.mock(FetchInformationAuditRepository.class);
-        instrumentIdentifierService = Mockito.mock(InstrumentIdentifierService.class);
-        cybersourceRestClient = Mockito.mock(CybersourceRestClient.class);
-        encryptionService = new EncryptionService();
+        instrumentIdentifierService   = Mockito.mock(InstrumentIdentifierService.class);
+        cybersourceRestClient         = Mockito.mock(CybersourceRestClient.class);
+        encryptionService             = new EncryptionService();
 
         networkTokenService = new NetworkTokenService(
                 merchantRepository,
@@ -75,228 +93,212 @@ public class NetworkTokenStepDefinitions {
                 fetchInformationAuditRepository,
                 instrumentIdentifierService,
                 cybersourceRestClient,
-                encryptionService
-        );
+                encryptionService);
 
-        // Reset state
-        thrownException = null;
+        thrownException      = null;
         networkTokenResponse = null;
-        cryptogramResponse = null;
+        cryptogramResponse   = null;
+        ntScenario           = null;
+        crScenario           = null;
     }
 
-    @Given("the merchant {string} is enrolled and active")
-    public void theMerchantIsEnrolledAndActive(String merchantId) {
-        this.merchantId = merchantId;
-        MerchantEnrollResponse merchant = MerchantEnrollResponse.builder()
-                .merchantTokenRegistrationId(merchantId)
-                .transactingOrgId("org-" + merchantId)
-                .merchantName("Test Merchant")
-                .status(MerchantEnrollResponse.MerchantStatus.ACTIVE)
-                .enrolledAt(LocalDateTime.now())
-                .updatedAt(LocalDateTime.now())
-                .build();
-        when(merchantRepository.findByMerchantTokenRegistrationId(merchantId))
-                .thenReturn(Optional.of(merchant));
+    // -----------------------------------------------------------------------
+    // Network-token Given / When / Then
+    // -----------------------------------------------------------------------
+
+    @Given("I load network token scenario {string} from test data")
+    public void iLoadNetworkTokenScenario(String scenarioId) {
+        ntScenario = ExcelTestDataReader.getNetworkTokenScenario(scenarioId);
+        setupMerchantMock(ntScenario.merchantId, ntScenario.merchantStatus);
     }
 
-    @Given("I have a valid card number {string}")
-    public void iHaveAValidCardNumber(String cardNumber) {
-        this.cardNumber = cardNumber;
-    }
+    @When("I execute the network token operation")
+    public void iExecuteTheNetworkTokenOperation() throws Exception {
+        // Stub common repository calls for success scenarios
+        when(tokenAuditRepository.save(any(TokenAudit.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+        when(fetchInformationAuditRepository.save(any()))
+                .thenAnswer(inv -> inv.getArgument(0));
 
-    @Given("the card expires on {string}")
-    public void theCardExpiresOn(String expiry) {
-        String[] parts = expiry.split("/");
-        this.expiryMonth = parts[0];
-        this.expiryYear = parts[1];
-    }
-
-    @When("I request to create a network token with external reference {string}")
-    public void iRequestToCreateANetworkTokenWithExternalReference(String externalRef) {
-        this.externalReference = externalRef;
-        networkTokenRequest = CreateNetworkTokenRequest.builder()
-                .merchantTokenRegistrationId(merchantId)
-                .cardNumber(cardNumber)
-                .cardExpiryMonth(expiryMonth)
-                .cardExpiryYear(expiryYear)
-                .externalReference(externalRef)
-                .build();
-
-        try {
-            // Mock the service responses
-            when(tokenAuditRepository.save(any(TokenAudit.class)))
-                    .thenAnswer(invocation -> invocation.getArgument(0));
-            
-            when(instrumentIdentifierService.createInstrumentIdentifier(anyString(), anyString()))
-                    .thenReturn("{\"id\":\"instr-123\"}");
-            
+        if (ntScenario.isDuplicate) {
+            // Simulate existing token for duplicate scenario
+            TokenTransaction existing = TokenTransaction.builder()
+                    .paymentTokenId("existing-token-id")
+                    .merchantTokenRegistrationId(ntScenario.merchantId)
+                    .instrumentIdentifierId("instr-existing")
+                    .networkToken("base64token")
+                    .par("PAR_EXISTING")
+                    .tokenExpiryMonth("12")
+                    .tokenExpiryYear("2025")
+                    .tokenStatus("ACTIVE")
+                    .build();
+            Mockito.doReturn("{\"id\":\"instr-existing\"}")
+                    .when(instrumentIdentifierService)
+                    .createInstrumentIdentifier(anyString(), anyString());
+            when(tokenTransactionRepository.findByInstrumentIdentifierId("instr-existing"))
+                    .thenReturn(Optional.of(existing));
+            Mockito.doReturn("{\"networkToken\":{\"number\":\"4111000011110000\","
+                            + "\"par\":\"PAR_EXISTING\",\"expirationMonth\":\"12\","
+                            + "\"expirationYear\":\"2025\",\"status\":\"ACTIVE\","
+                            + "\"cryptogram\":\"FRESH_CRYPTOGRAM\"}}")
+                    .when(cybersourceRestClient).get(anyString(), anyString());
+            when(tokenTransactionRepository.save(any(TokenTransaction.class)))
+                    .thenAnswer(inv -> inv.getArgument(0));
+        } else {
+            Mockito.doReturn("{\"id\":\"instr-123\"}")
+                    .when(instrumentIdentifierService)
+                    .createInstrumentIdentifier(anyString(), anyString());
             when(tokenTransactionRepository.findByInstrumentIdentifierId(anyString()))
                     .thenReturn(Optional.empty());
-            
-            when(cybersourceRestClient.get(anyString(), anyString()))
-                    .thenReturn("{\"networkToken\":{\"number\":\"4111000011110000\",\"par\":\"PAR123\",\"expirationMonth\":\"12\",\"expirationYear\":\"2025\",\"status\":\"ACTIVE\",\"cryptogram\":\"ABC123\"}}");
-            
+            Mockito.doReturn("{\"networkToken\":{\"number\":\"4111000011110000\","
+                            + "\"par\":\"PAR123\",\"expirationMonth\":\"12\","
+                            + "\"expirationYear\":\"2025\",\"status\":\"ACTIVE\","
+                            + "\"cryptogram\":\"ABC123\"}}")
+                    .when(cybersourceRestClient).get(anyString(), anyString());
             when(tokenTransactionRepository.save(any(TokenTransaction.class)))
-                    .thenAnswer(invocation -> invocation.getArgument(0));
-            
-            when(fetchInformationAuditRepository.save(any()))
-                    .thenAnswer(invocation -> invocation.getArgument(0));
-
-            networkTokenResponse = networkTokenService.createNetworkToken(networkTokenRequest);
-        } catch (Exception e) {
-            thrownException = e;
+                    .thenAnswer(inv -> inv.getArgument(0));
         }
-    }
 
-    @Then("the network token should be created successfully")
-    public void theNetworkTokenShouldBeCreatedSuccessfully() {
-        assertNotNull(networkTokenResponse);
-        assertNull(thrownException);
-    }
-
-    @Then("the response should contain a payment token ID")
-    public void theResponseShouldContainAPaymentTokenID() {
-        assertNotNull(networkTokenResponse.getPaymentTokenId());
-    }
-
-    @Then("the response should contain a network token")
-    public void theResponseShouldContainANetworkToken() {
-        assertNotNull(networkTokenResponse.getNetworkToken());
-    }
-
-    @Then("the response should contain a cryptogram")
-    public void theResponseShouldContainACryptogram() {
-        assertNotNull(networkTokenResponse.getCryptogram());
-    }
-
-    @Then("the response should contain a PAR")
-    public void theResponseShouldContainAPAR() {
-        assertNotNull(networkTokenResponse.getPar());
-    }
-
-    @Then("an audit record should be created with isDuplicate set to false")
-    public void anAuditRecordShouldBeCreatedWithIsDuplicateSetToFalse() {
-        // This would be verified via repository interaction in actual implementation
-        assertTrue(true, "Audit record verification passed");
-    }
-
-    @Given("a network token already exists for this card")
-    public void aNetworkTokenAlreadyExistsForThisCard() {
-        // Stub for duplicate scenario
-    }
-
-    @Then("the existing network token should be returned")
-    public void theExistingNetworkTokenShouldBeReturned() {
-        assertNotNull(networkTokenResponse);
-    }
-
-    @Then("the response should contain the original payment token ID")
-    public void theResponseShouldContainTheOriginalPaymentTokenID() {
-        assertNotNull(networkTokenResponse.getPaymentTokenId());
-    }
-
-    @Then("a fresh cryptogram should be generated")
-    public void aFreshCryptogramShouldBeGenerated() {
-        assertNotNull(networkTokenResponse.getCryptogram());
-    }
-
-    @Then("an audit record should be created with isDuplicate set to true")
-    public void anAuditRecordShouldBeCreatedWithIsDuplicateSetToTrue() {
-        assertTrue(true, "Duplicate audit record verification passed");
-    }
-
-    @Given("a network token exists with payment token ID {string}")
-    public void aNetworkTokenExistsWithPaymentTokenID(String paymentTokenId) {
-        TokenTransaction token = TokenTransaction.builder()
-                .paymentTokenId(paymentTokenId)
-                .merchantTokenRegistrationId(merchantId)
-                .instrumentIdentifierId("instr-123")
-                .build();
-        when(tokenTransactionRepository.findByPaymentTokenId(paymentTokenId))
-                .thenReturn(Optional.of(token));
-    }
-
-    @When("I request to create a cryptogram with external reference {string}")
-    public void iRequestToCreateACryptogramWithExternalReference(String externalRef) {
-        cryptogramRequest = CreateCryptogramRequest.builder()
-                .paymentTokenId("token-123")
-                .externalReference(externalRef)
+        CreateNetworkTokenRequest request = CreateNetworkTokenRequest.builder()
+                .merchantTokenRegistrationId(ntScenario.merchantId)
+                .cardNumber(ntScenario.cardNumber)
+                .cardExpiryMonth(ntScenario.expiryMonth)
+                .cardExpiryYear(ntScenario.expiryYear)
+                .externalReference(ntScenario.externalReference)
                 .build();
 
         try {
-            when(cybersourceRestClient.get(anyString(), anyString()))
-                    .thenReturn("{\"networkToken\":{\"cryptogram\":\"XYZ789\"}}");
-            
-            when(fetchInformationAuditRepository.save(any()))
-                    .thenAnswer(invocation -> invocation.getArgument(0));
-
-            cryptogramResponse = networkTokenService.createCryptogram(cryptogramRequest);
+            networkTokenResponse = networkTokenService.createNetworkToken(request);
         } catch (Exception e) {
             thrownException = e;
         }
     }
 
-    @Then("a new cryptogram should be generated successfully")
-    public void aNewCryptogramShouldBeGeneratedSuccessfully() {
-        assertNotNull(cryptogramResponse);
-        assertNull(thrownException);
+    @Then("the network token response should match the expected outcome")
+    public void theNetworkTokenResponseShouldMatchExpectedOutcome() {
+        if (ntScenario.isSuccessExpected()) {
+            assertNull(thrownException,
+                    "Expected success but got exception: " + (thrownException != null ? thrownException.getMessage() : ""));
+            assertNotNull(networkTokenResponse, "Response must not be null");
+            assertNotNull(networkTokenResponse.getPaymentTokenId(), "paymentTokenId must be present");
+            assertNotNull(networkTokenResponse.getNetworkToken(), "networkToken must be present");
+            assertNotNull(networkTokenResponse.getCryptogram(), "cryptogram must be present");
+            assertNotNull(networkTokenResponse.getPar(), "PAR must be present");
+        } else {
+            assertNotNull(thrownException,
+                    "Expected failure with '" + ntScenario.expectedError + "' but no exception was thrown");
+            if (ntScenario.expectedError != null && !ntScenario.expectedError.isBlank()) {
+                assertTrue(
+                        thrownException.getMessage() != null
+                                && thrownException.getMessage().contains(ntScenario.expectedError),
+                        "Expected error message to contain '" + ntScenario.expectedError
+                                + "' but was: " + thrownException.getMessage());
+            }
+        }
     }
 
-    @Then("the response should only contain the cryptogram and payment token ID")
-    public void theResponseShouldOnlyContainTheCryptogramAndPaymentTokenID() {
-        assertNotNull(cryptogramResponse.getCryptogram());
-        assertNotNull(cryptogramResponse.getPaymentTokenId());
+    // -----------------------------------------------------------------------
+    // Cryptogram Given / When / Then
+    // -----------------------------------------------------------------------
+
+    @Given("I load cryptogram scenario {string} from test data")
+    public void iLoadCryptogramScenario(String scenarioId) {
+        crScenario = ExcelTestDataReader.getCryptogramScenario(scenarioId);
     }
 
-    @Then("a fetch information audit should be created with type {string}")
-    public void aFetchInformationAuditShouldBeCreatedWithType(String type) {
-        assertTrue(true, "Fetch information audit verification passed for type: " + type);
-    }
+    @When("I execute the cryptogram operation")
+    public void iExecuteTheCryptogramOperation() throws Exception {
+        if (crScenario.tokenExists) {
+            TokenTransaction token = TokenTransaction.builder()
+                    .paymentTokenId(crScenario.paymentTokenId)
+                    .merchantTokenRegistrationId("merchant-123")
+                    .instrumentIdentifierId("instr-123")
+                    .build();
+            when(tokenTransactionRepository.findByPaymentTokenId(crScenario.paymentTokenId))
+                    .thenReturn(Optional.of(token));
+            // Cryptogram service also validates the merchant
+            MerchantEnrollResponse merchant = MerchantEnrollResponse.builder()
+                    .merchantTokenRegistrationId("merchant-123")
+                    .transactingOrgId("org-merchant-123")
+                    .status(MerchantEnrollResponse.MerchantStatus.ACTIVE)
+                    .build();
+            when(merchantRepository.findByMerchantTokenRegistrationId("merchant-123"))
+                    .thenReturn(Optional.of(merchant));
+            Mockito.doReturn("{\"networkToken\":{\"cryptogram\":\"XYZ789\"}}")
+                    .when(cybersourceRestClient).get(anyString(), anyString());
+            when(fetchInformationAuditRepository.save(any()))
+                    .thenAnswer(inv -> inv.getArgument(0));
+        } else {
+            when(tokenTransactionRepository.findByPaymentTokenId(crScenario.paymentTokenId))
+                    .thenReturn(Optional.empty());
+        }
 
-    @Given("the merchant {string} is not enrolled")
-    public void theMerchantIsNotEnrolled(String merchantId) {
-        this.merchantId = merchantId;
-        when(merchantRepository.findByMerchantTokenRegistrationId(merchantId))
-                .thenReturn(Optional.empty());
-    }
-
-    @Then("the request should fail with error {string}")
-    public void theRequestShouldFailWithError(String errorMessage) {
-        assertNotNull(thrownException);
-        assertTrue(thrownException instanceof CybersourceException);
-        assertTrue(thrownException.getMessage().contains(errorMessage) || 
-                   errorMessage.contains("Merchant not found") || 
-                   errorMessage.contains("Merchant is not active") ||
-                   errorMessage.contains("Token not found"));
-    }
-
-    @Given("the merchant {string} is enrolled but inactive")
-    public void theMerchantIsEnrolledButInactive(String merchantId) {
-        this.merchantId = merchantId;
-        MerchantEnrollResponse merchant = MerchantEnrollResponse.builder()
-                .merchantTokenRegistrationId(merchantId)
-                .transactingOrgId("org-" + merchantId)
-                .merchantName("Inactive Merchant")
-                .status(MerchantEnrollResponse.MerchantStatus.INACTIVE)
+        CreateCryptogramRequest request = CreateCryptogramRequest.builder()
+                .paymentTokenId(crScenario.paymentTokenId)
+                .externalReference(crScenario.externalReference)
                 .build();
-        when(merchantRepository.findByMerchantTokenRegistrationId(merchantId))
-                .thenReturn(Optional.of(merchant));
+
+        try {
+            cryptogramResponse = networkTokenService.createCryptogram(request);
+        } catch (Exception e) {
+            thrownException = e;
+        }
     }
 
-    @Given("no network token exists with payment token ID {string}")
-    public void noNetworkTokenExistsWithPaymentTokenID(String paymentTokenId) {
-        when(tokenTransactionRepository.findByPaymentTokenId(paymentTokenId))
-                .thenReturn(Optional.empty());
+    @Then("the cryptogram response should match the expected outcome")
+    public void theCryptogramResponseShouldMatchExpectedOutcome() {
+        if (crScenario.isSuccessExpected()) {
+            assertNull(thrownException,
+                    "Expected success but got exception: " + (thrownException != null ? thrownException.getMessage() : ""));
+            assertNotNull(cryptogramResponse, "Response must not be null");
+            assertNotNull(cryptogramResponse.getCryptogram(), "cryptogram must be present");
+            assertNotNull(cryptogramResponse.getPaymentTokenId(), "paymentTokenId must be present");
+        } else {
+            assertNotNull(thrownException,
+                    "Expected failure with '" + crScenario.expectedError + "' but no exception was thrown");
+            if (crScenario.expectedError != null && !crScenario.expectedError.isBlank()) {
+                assertTrue(
+                        thrownException.getMessage() != null
+                                && thrownException.getMessage().contains(crScenario.expectedError),
+                        "Expected error message to contain '" + crScenario.expectedError
+                                + "' but was: " + thrownException.getMessage());
+            }
+        }
     }
 
-    @Given("I have an empty card number")
-    public void iHaveAnEmptyCardNumber() {
-        this.cardNumber = "";
-    }
+    // -----------------------------------------------------------------------
+    // Private helpers
+    // -----------------------------------------------------------------------
 
-    @Then("the request should fail with validation error {string}")
-    public void theRequestShouldFailWithValidationError(String errorMessage) {
-        // Validation would be handled by @Valid annotations in the controller
-        assertTrue(true, "Validation error check passed for: " + errorMessage);
+    private void setupMerchantMock(String merchantId, String merchantStatus) {
+        switch (merchantStatus) {
+            case "ACTIVE" -> {
+                MerchantEnrollResponse merchant = MerchantEnrollResponse.builder()
+                        .merchantTokenRegistrationId(merchantId)
+                        .transactingOrgId("org-" + merchantId)
+                        .merchantName("Test Merchant")
+                        .status(MerchantEnrollResponse.MerchantStatus.ACTIVE)
+                        .enrolledAt(LocalDateTime.now())
+                        .updatedAt(LocalDateTime.now())
+                        .build();
+                when(merchantRepository.findByMerchantTokenRegistrationId(merchantId))
+                        .thenReturn(Optional.of(merchant));
+            }
+            case "INACTIVE" -> {
+                MerchantEnrollResponse merchant = MerchantEnrollResponse.builder()
+                        .merchantTokenRegistrationId(merchantId)
+                        .transactingOrgId("org-" + merchantId)
+                        .merchantName("Inactive Merchant")
+                        .status(MerchantEnrollResponse.MerchantStatus.INACTIVE)
+                        .build();
+                when(merchantRepository.findByMerchantTokenRegistrationId(merchantId))
+                        .thenReturn(Optional.of(merchant));
+            }
+            case "NOT_ENROLLED" -> when(merchantRepository.findByMerchantTokenRegistrationId(merchantId))
+                    .thenReturn(Optional.empty());
+            default -> throw new IllegalArgumentException(
+                    "Unknown MerchantStatus in Excel: " + merchantStatus);
+        }
     }
 }
+
