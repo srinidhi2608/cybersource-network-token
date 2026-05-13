@@ -827,6 +827,60 @@ A timeline view (useful for parallel runs) is at:
 target/cucumber-reports/timeline/index.html
 ```
 
+#### Cucumber Code Coverage (JaCoCo)
+
+Use the command below to run only Cucumber scenarios and generate Java code coverage:
+
+```bash
+mvn clean test -Dtest=CucumberTestRunner jacoco:report
+```
+
+Coverage reports are generated at:
+
+```
+target/site/jacoco/index.html
+target/site/jacoco/jacoco.csv
+target/site/jacoco/jacoco.xml
+```
+
+To print a quick summary from the latest run:
+
+```bash
+python3 - <<'PY'
+import csv
+from pathlib import Path
+p = Path('target/site/jacoco/jacoco.csv')
+rows = list(csv.DictReader(p.open()))
+
+totals = {k: 0 for k in [
+    'INSTRUCTION_MISSED', 'INSTRUCTION_COVERED',
+    'BRANCH_MISSED', 'BRANCH_COVERED',
+    'LINE_MISSED', 'LINE_COVERED',
+    'METHOD_MISSED', 'METHOD_COVERED'
+]}
+
+for row in rows:
+    for key in totals:
+        totals[key] += int(row[key])
+
+def pct(covered, missed):
+    total = covered + missed
+    return 0 if total == 0 else (covered * 100.0 / total)
+
+print(f"Instruction coverage: {pct(totals['INSTRUCTION_COVERED'], totals['INSTRUCTION_MISSED']):.2f}%")
+print(f"Branch coverage:      {pct(totals['BRANCH_COVERED'], totals['BRANCH_MISSED']):.2f}%")
+print(f"Line coverage:        {pct(totals['LINE_COVERED'], totals['LINE_MISSED']):.2f}%")
+print(f"Method coverage:      {pct(totals['METHOD_COVERED'], totals['METHOD_MISSED']):.2f}%")
+PY
+```
+
+Latest local Cucumber-only coverage example (run on **2026-05-13**):
+
+- **Instruction coverage:** 25.43%
+- **Branch coverage:** 16.15%
+- **Line coverage:** 27.55% (305 / 1107 lines)
+- **Method coverage:** 21.93%
+
 ---
 
 #### Adding a new test scenario
