@@ -9,11 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.reactive.function.client.WebClientException;
-import org.springframework.web.reactive.function.client.WebClientResponseException;
 
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
@@ -26,13 +22,10 @@ public class PaymentCredentialsService {
     private static final Logger logger = LoggerFactory.getLogger(PaymentCredentialsService.class);
     
     @Autowired
-    private WebClient webClient;
+    private CybersourceRestClient cybersourceRestClient;
     
     @Autowired
     private CybersourceConfig cybersourceConfig;
-    
-    @Autowired
-    private JwtTokenUtil jwtTokenUtil;
     
     @Autowired
     private TokenStorageRepository tokenStorageRepository;
@@ -60,11 +53,8 @@ public class PaymentCredentialsService {
             // Build the API path
             String path = "/pts/v2/instrumentidentifiers/" + instrumentIdentifierTokenId + "/networkTokens";
             
-            // Generate JWT for authentication with the specific merchant ID
-            String jwt = generateJwtToken(path, "GET", merchantId);
-            
-            // Make the API call using WebClient with specific merchant ID
-            String response = makeApiCall(path, jwt, merchantId);
+            // Make the API call using RestClient
+            String response = cybersourceRestClient.get(path, merchantId);
             
             // Parse and persist the response
             persistPaymentCredentials(instrumentIdentifierTokenId, merchantId, response);
@@ -74,24 +64,10 @@ public class PaymentCredentialsService {
             
             return response;
             
-        } catch (PaymentCredentialsException e) {
-            // Re-throw PaymentCredentialsException (from JWT generation)
-            logger.error("Payment credentials error for instrument {} and merchant {}", 
+        } catch (CybersourceApiException | NetworkException e) {
+            logger.error("API error for instrument {} and merchant {}", 
                         instrumentIdentifierTokenId, merchantId, e);
             throw e;
-        } catch (WebClientResponseException e) {
-            logger.error("Cybersource API error for instrument {} and merchant {}: Status={}, Body={}", 
-                        instrumentIdentifierTokenId, merchantId, e.getStatusCode(), e.getResponseBodyAsString(), e);
-            throw new CybersourceApiException(
-                "Failed to get payment credentials from Cybersource API", 
-                e.getStatusCode().value(), 
-                e.getResponseBodyAsString(), 
-                e
-            );
-        } catch (WebClientException e) {
-            logger.error("Network error while calling Cybersource API for instrument {} and merchant {}", 
-                        instrumentIdentifierTokenId, merchantId, e);
-            throw new NetworkException("Network error while calling Cybersource API", e);
         } catch (DataAccessException e) {
             // Re-throw DataAccessException (from persistence operations)
             logger.error("Database error while persisting payment credentials for instrument {} and merchant {}", 
@@ -128,41 +104,6 @@ public class PaymentCredentialsService {
             logger.error("Database error while querying token storage for payment token ID {}", 
                         paymentTokenId, e);
             throw new DataAccessException("Failed to query token storage", e);
-        }
-    }
-    
-    private String generateJwtToken(String path, String method, String merchantId) throws PaymentCredentialsException {
-        try {
-            return jwtTokenUtil.generateJwt(
-                merchantId, 
-                cybersourceConfig.getApiKey(), 
-                cybersourceConfig.getSecretKey(), 
-                path, 
-                method
-            );
-        } catch (Exception e) {
-            throw new PaymentCredentialsException("Failed to generate JWT token", e);
-        }
-    }
-    
-    private String makeApiCall(String path, String jwt, String merchantId) {
-        try {
-            return webClient.get()
-                    .uri(cybersourceConfig.getBaseUrl() + path)
-                    .header("v-c-merchant-id", merchantId)
-                    .header("Authorization", "Bearer " + jwt)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .timeout(Duration.ofSeconds(30))
-                    .block();
-        } catch (Exception e) {
-            if (e instanceof WebClientResponseException) {
-                throw (WebClientResponseException) e;
-            } else if (e instanceof WebClientException) {
-                throw (WebClientException) e;
-            } else {
-                throw new RuntimeException("Unexpected error during API call", e);
-            }
         }
     }
     
