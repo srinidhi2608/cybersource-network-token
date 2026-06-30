@@ -1,0 +1,138 @@
+### Health check (application up)
+GET {{host}}/actuator/health
+Accept: application/json
+
+> {%
+client.test("Health endpoint responds", function() {
+  client.assert(response.status === 200, "Expected 200");
+});
+%}
+
+###
+
+### Create instrument identifier (happy path)
+POST {{host}}/cybersource/instrument-identifier?cardNumber={{cardNumber}}&merchantId={{merchantId}}
+Accept: application/json
+
+> {%
+client.test("Create instrument identifier returns success code", function() {
+  client.assert(response.status === 200, "Expected 200");
+});
+
+try {
+  const body = typeof response.body === "string" ? JSON.parse(response.body) : response.body;
+  if (body && body.id) {
+    client.global.set("instrumentIdentifierId", body.id);
+  }
+} catch (e) {
+  // Ignore JSON parsing failures; manual token can be provided in env file.
+}
+%}
+
+###
+
+### Create instrument identifier (validation: missing cardNumber)
+POST {{host}}/cybersource/instrument-identifier?merchantId={{merchantId}}
+Accept: application/json
+
+> {%
+client.test("Missing cardNumber is rejected", function() {
+  client.assert(response.status >= 400 && response.status < 500, "Expected 4xx");
+});
+%}
+
+###
+
+### Get instrument identifier by tokenId (happy path)
+GET {{host}}/cybersource/instrument-identifier/{{instrumentIdentifierId}}?merchantId={{merchantId}}
+Accept: application/json
+
+> {%
+client.test("Get instrument identifier returns success code", function() {
+  client.assert(response.status === 200, "Expected 200");
+});
+%}
+
+###
+
+### Get instrument identifier by tokenId (negative: invalid token)
+GET {{host}}/cybersource/instrument-identifier/{{invalidTokenId}}?merchantId={{merchantId}}
+Accept: application/json
+
+> {%
+client.test("Invalid instrument identifier token returns non-200", function() {
+  client.assert(response.status !== 200, "Expected non-200");
+});
+%}
+
+###
+
+### Get instrument identifier by tokenId (validation: missing merchantId)
+GET {{host}}/cybersource/instrument-identifier/{{instrumentIdentifierId}}
+Accept: application/json
+
+> {%
+client.test("Missing merchantId is rejected", function() {
+  client.assert(response.status >= 400 && response.status < 500, "Expected 4xx");
+});
+%}
+
+###
+
+### Get payment credentials (happy path)
+GET {{host}}/cybersource/payment-credentials/{{instrumentIdentifierId}}?merchantId={{merchantId}}
+Accept: application/json
+
+> {%
+client.test("Payment credentials returns success code", function() {
+  client.assert(response.status === 200, "Expected 200");
+});
+%}
+
+###
+
+### Get payment credentials (negative: invalid token)
+GET {{host}}/cybersource/payment-credentials/{{invalidTokenId}}?merchantId={{merchantId}}
+Accept: application/json
+
+> {%
+client.test("Invalid payment-credentials token returns non-200", function() {
+  client.assert(response.status !== 200, "Expected non-200");
+});
+%}
+
+###
+
+### Get payment credentials (validation: missing merchantId)
+GET {{host}}/cybersource/payment-credentials/{{instrumentIdentifierId}}
+Accept: application/json
+
+> {%
+client.test("Missing merchantId is rejected", function() {
+  client.assert(response.status >= 400 && response.status < 500, "Expected 4xx");
+});
+%}
+
+###
+
+### Generate network token and cryptogram (happy path)
+POST {{host}}/network-token?cardNumber={{cardNumber}}&merchantId={{merchantId}}
+Accept: application/json
+
+> {%
+client.test("Network token generation returns success code", function() {
+  client.assert(response.status === 200, "Expected 200");
+});
+%}
+
+###
+
+### Generate network token and cryptogram (validation: missing merchantId)
+POST {{host}}/network-token?cardNumber={{cardNumber}}
+Accept: application/json
+
+> {%
+client.test("Missing merchantId is rejected", function() {
+  client.assert(response.status >= 400 && response.status < 500, "Expected 4xx");
+});
+%}
