@@ -1,0 +1,184 @@
+# ============================================================
+# Docker Compose — Local Development Stack
+#
+# Services:
+#   ministack  – Lightweight AWS emulator (SQS) using Ministack
+#   sqs-init   – One-shot container that creates the required SQS
+#                queues inside Ministack on first start
+#   mongodb    – MongoDB document database
+#   app        – Cybersource Network Token Spring Boot application
+#
+# Quick start:
+#   cp .env.example .env          # fill in Cybersource credentials
+#   docker compose up --build
+# ============================================================
+
+# Load variables from the .env file (created from .env.example)
+# All ${VAR} references below are resolved from that file.
+
+services:
+
+  # ──────────────────────────────────────────────────────────
+  # Ministack – lightweight AWS service emulator
+  # Provides a LocalStack-compatible SQS endpoint on port 4566.
+  # Docs: https://hub.docker.com/r/ministackorg/ministack
+  # ──────────────────────────────────────────────────────────
+  ministack:
+    image: ministackorg/ministack:latest
+    container_name: ministack
+    ports:
+      # Expose the AWS-compatible API endpoint to the host so you can
+      # interact with Ministack from your machine (e.g. using the AWS CLI)
+      - "4566:4566"
+    environment:
+      # Services to activate inside Ministack (comma-separated)
+      - SERVICES=sqs
+      # Default AWS region used by Ministack
+      - DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+    healthcheck:
+      # Poll the SQS health endpoint until Ministack is ready
+      test: ["CMD", "curl", "-sf", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - backend
+
+  # ──────────────────────────────────────────────────────────
+  # sqs-init – one-shot initialisation container
+  # Uses the AWS CLI to create the main queue and DLQ inside
+  # Ministack before the application starts.
+  # This container exits immediately after the queues are created.
+  # ──────────────────────────────────────────────────────────
+  sqs-init:
+    image: amazon/aws-cli:latest
+    container_name: sqs-init
+    depends_on:
+      ministack:
+        condition: service_healthy
+    environment:
+      # Dummy credentials – Ministack accepts any non-empty values
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-test}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-test}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+    entrypoint: >
+      /bin/sh -c "
+        echo 'Creating SQS Dead-Letter Queue: ${SQS_DLQ_NAME:-token-lifecycle-dlq}' &&
+        aws --endpoint-url http://ministack:4566 sqs create-queue \
+            --queue-name ${SQS_DLQ_NAME:-token-lifecycle-dlq} \
+            --region ${AWS_DEFAULT_REGION:-us-east-1} &&
+
+        echo 'Fetching DLQ ARN...' &&
+        DLQ_ARN=$$(aws --endpoint-url http://ministack:4566 sqs get-queue-attributes \
+            --queue-url http://ministack:4566/000000000000/${SQS_DLQ_NAME:-token-lifecycle-dlq} \
+            --attribute-names QueueArn \
+            --query 'Attributes.QueueArn' \
+            --output text \
+            --region ${AWS_DEFAULT_REGION:-us-east-1}) &&
+
+        echo 'Creating SQS main queue: ${SQS_QUEUE_NAME:-token-lifecycle-queue} with redrive policy...' &&
+        aws --endpoint-url http://ministack:4566 sqs create-queue \
+            --queue-name ${SQS_QUEUE_NAME:-token-lifecycle-queue} \
+            --attributes '{\"RedrivePolicy\":\"{\\\"deadLetterTargetArn\\\":\\\"'$${DLQ_ARN}'\\\",\\\"maxReceiveCount\\\":\\\"3\\\"}\"}' \
+            --region ${AWS_DEFAULT_REGION:-us-east-1} &&
+
+        echo 'SQS queues created successfully.'
+      "
+    networks:
+      - backend
+    # Restart policy: never restart; this is an init-only container
+    restart: "no"
+
+  # ──────────────────────────────────────────────────────────
+  # MongoDB – document database used by the application
+  # Data is persisted in a named volume so it survives restarts.
+  # ──────────────────────────────────────────────────────────
+  mongodb:
+    image: mongo:7.0
+    container_name: mongodb
+    ports:
+      # Expose MongoDB to the host for direct inspection with tools like
+      # MongoDB Compass or mongosh
+      - "27017:27017"
+    environment:
+      # Create the application database on first startup
+      - MONGO_INITDB_DATABASE=${MONGO_INITDB_DATABASE:-cybersource_tms}
+    volumes:
+      # Named volume for data persistence across container restarts
+      - mongo_data:/data/db
+    healthcheck:
+      # Use mongosh to verify the daemon is accepting connections
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')", "--quiet"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - backend
+
+  # ──────────────────────────────────────────────────────────
+  # app – Cybersource Network Token Spring Boot application
+  # Built from the local Dockerfile (multi-stage Maven build).
+  # Waits for MongoDB and Ministack to be healthy, and for the
+  # SQS queues to have been initialised, before starting.
+  # ──────────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cybersource-app
+    ports:
+      # Map host port 8080 to the container's Spring Boot port
+      - "8080:8080"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      ministack:
+        condition: service_healthy
+      sqs-init:
+        condition: service_completed_successfully
+    environment:
+      # ── MongoDB connection (points to the mongodb service above) ──
+      - SPRING_DATA_MONGODB_HOST=mongodb
+      - SPRING_DATA_MONGODB_PORT=27017
+      - SPRING_DATA_MONGODB_DATABASE=${MONGO_INITDB_DATABASE:-cybersource_tms}
+
+      # ── AWS SQS (points to the Ministack service above) ──────────
+      - AWS_SQS_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+      - AWS_SQS_ACCESS_KEY=${AWS_ACCESS_KEY_ID:-test}
+      - AWS_SQS_SECRET_KEY=${AWS_SECRET_ACCESS_KEY:-test}
+      # Override the SQS endpoint to Ministack instead of real AWS
+      - AWS_SQS_ENDPOINT=http://ministack:4566
+      # Queue URLs use Ministack's virtual account ID (000000000000)
+      - AWS_SQS_QUEUE_URL=http://ministack:4566/000000000000/${SQS_QUEUE_NAME:-token-lifecycle-queue}
+      - AWS_SQS_DLQ_URL=http://ministack:4566/000000000000/${SQS_DLQ_NAME:-token-lifecycle-dlq}
+
+      # ── Cybersource API credentials (fill in .env) ──────────────
+      - CYBERSOURCE_KEY_ID=${CYBERSOURCE_KEY_ID}
+      - CYBERSOURCE_API_KEY=${CYBERSOURCE_API_KEY}
+      - CYBERSOURCE_SECRET_KEY=${CYBERSOURCE_SECRET_KEY}
+      - CYBERSOURCE_MERCHANT_ID=${CYBERSOURCE_MERCHANT_ID}
+      - CYBERSOURCE_BASE_URL=${CYBERSOURCE_BASE_URL:-https://apitest.cybersource.com}
+
+      # ── Webhook security ─────────────────────────────────────────
+      - WEBHOOK_SIGNATURE_SECRET=${WEBHOOK_SIGNATURE_SECRET}
+    networks:
+      - backend
+    restart: on-failure
+
+# ──────────────────────────────────────────────────────────
+# Named volumes
+# mongo_data – persists MongoDB data between container restarts
+# ──────────────────────────────────────────────────────────
+volumes:
+  mongo_data:
+
+# ──────────────────────────────────────────────────────────
+# Networks
+# backend – internal bridge network shared by all services.
+# Services communicate by container name (e.g. "mongodb:27017").
+# ──────────────────────────────────────────────────────────
+networks:
+  backend:
+    driver: bridge

@@ -50,3 +50,6 @@ Thumbs.db
 
 # Spring Boot
 spring-boot-devtools.properties
+
+# Local environment secrets — use .env.example as a template
+.env

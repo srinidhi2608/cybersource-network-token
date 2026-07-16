@@ -626,7 +626,101 @@ Includes:
 - MongoDB 4.4+
 - Cybersource API credentials
 
-### Configuration
+---
+
+## Local Development with Docker (Recommended)
+
+The easiest way to run the full stack locally is with Docker Compose. It spins up:
+
+| Service | Description | Port |
+|---------|-------------|------|
+| **ministack** | [Ministack](https://hub.docker.com/r/ministackorg/ministack) — lightweight AWS emulator providing a LocalStack-compatible SQS endpoint | `4566` |
+| **sqs-init** | One-shot container that creates the `token-lifecycle-queue` and `token-lifecycle-dlq` SQS queues inside Ministack | — |
+| **mongodb** | MongoDB 7.0 | `27017` |
+| **app** | Cybersource Network Token Spring Boot application | `8080` |
+
+### Prerequisites for Docker setup
+
+- [Docker](https://docs.docker.com/get-docker/) 24+
+- [Docker Compose](https://docs.docker.com/compose/install/) v2+ (included with Docker Desktop)
+
+### 1. Create your local `.env` file
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and fill in your Cybersource sandbox credentials:
+
+```dotenv
+CYBERSOURCE_KEY_ID=your-key-id
+CYBERSOURCE_API_KEY=your-api-key
+CYBERSOURCE_SECRET_KEY=your-secret-key
+CYBERSOURCE_MERCHANT_ID=your-merchant-id
+WEBHOOK_SIGNATURE_SECRET=any-local-secret
+```
+
+> **Important:** The `.env` file is listed in `.gitignore` and will never be committed.
+
+### 2. Build and start all services
+
+```bash
+docker compose up --build
+```
+
+Docker Compose will:
+1. Build the Spring Boot application image (multi-stage Maven build)
+2. Start Ministack and wait until its health check passes
+3. Create the SQS queues (`token-lifecycle-queue`, `token-lifecycle-dlq`) inside Ministack
+4. Start MongoDB and wait until it is healthy
+5. Start the application once all dependencies are ready
+
+The application will be available at **http://localhost:8080**.
+
+### 3. Verify Ministack SQS is working
+
+```bash
+# List queues in Ministack
+aws --endpoint-url http://localhost:4566 sqs list-queues \
+    --region us-east-1 \
+    --no-sign-request
+```
+
+Expected output:
+```json
+{
+    "QueueUrls": [
+        "http://localhost:4566/000000000000/token-lifecycle-dlq",
+        "http://localhost:4566/000000000000/token-lifecycle-queue"
+    ]
+}
+```
+
+### 4. Stopping and cleaning up
+
+```bash
+# Stop all containers (preserves MongoDB data volume)
+docker compose down
+
+# Stop and remove all containers AND volumes (fresh start)
+docker compose down -v
+```
+
+### How Ministack replaces real AWS SQS
+
+The application's `AwsSqsConfig` already supports a custom endpoint via `aws.sqs.endpoint`. Docker Compose injects:
+
+```
+AWS_SQS_ENDPOINT=http://ministack:4566
+AWS_SQS_QUEUE_URL=http://ministack:4566/000000000000/token-lifecycle-queue
+AWS_SQS_DLQ_URL=http://ministack:4566/000000000000/token-lifecycle-dlq
+```
+
+No code changes are needed; switching back to real AWS in a deployed environment is done simply by removing these overrides and providing genuine AWS credentials.
+
+---
+
+### Configuration (non-Docker / manual setup)
 
 1. Update `src/main/resources/application.properties`:
 
