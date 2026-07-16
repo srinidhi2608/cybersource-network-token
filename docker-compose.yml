@@ -24,7 +24,7 @@ services:
   # Docs: https://hub.docker.com/r/ministackorg/ministack
   # ──────────────────────────────────────────────────────────
   ministack:
-    image: ministackorg/ministack:latest
+    image: ministackorg/ministack:1.3.72
     container_name: ministack
     ports:
       # Expose the AWS-compatible API endpoint to the host so you can
@@ -52,7 +52,7 @@ services:
   # This container exits immediately after the queues are created.
   # ──────────────────────────────────────────────────────────
   sqs-init:
-    image: amazon/aws-cli:latest
+    image: amazon/aws-cli:2.35.24
     container_name: sqs-init
     depends_on:
       ministack:
@@ -78,9 +78,10 @@ services:
             --region ${AWS_DEFAULT_REGION:-us-east-1}) &&
 
         echo 'Creating SQS main queue: ${SQS_QUEUE_NAME:-token-lifecycle-queue} with redrive policy...' &&
+        REDRIVE_POLICY=\"{\\\"deadLetterTargetArn\\\":\\\"$${DLQ_ARN}\\\",\\\"maxReceiveCount\\\":\\\"3\\\"}\" &&
         aws --endpoint-url http://ministack:4566 sqs create-queue \
             --queue-name ${SQS_QUEUE_NAME:-token-lifecycle-queue} \
-            --attributes '{\"RedrivePolicy\":\"{\\\"deadLetterTargetArn\\\":\\\"'$${DLQ_ARN}'\\\",\\\"maxReceiveCount\\\":\\\"3\\\"}\"}' \
+            --attributes RedrivePolicy=\"$${REDRIVE_POLICY}\" \
             --region ${AWS_DEFAULT_REGION:-us-east-1} &&
 
         echo 'SQS queues created successfully.'
